@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="ac7cd8d7-48b9-40b0-95d9-20d00bcd9a10" name="demelosAPP" url="https://apps.demelos.com">
+        <fileTransfer rootFolder="/var/www/html/demelos" accessType="SFTP" host="ssh4.demelos.com" port="22" sshConfigId="324325a7-f5ca-40f0-a132-a8160bf82742" sshConfig="demelosAPP">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" isUseRsync="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

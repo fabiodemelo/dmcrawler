@@ -1,0 +1,1 @@
+ALTER TABLE settings ADD COLUMN max_depth INT DEFAULT 20;

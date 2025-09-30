@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="SshConfigs">
+    <configs>
+      <sshConfig authType="PASSWORD" connectionConfig="{&quot;serverAliveInterval&quot;:300}" host="ssh4.demelos.com" id="324325a7-f5ca-40f0-a132-a8160bf82742" port="22" customName="demelosAPP" nameFormat="CUSTOM" username="fabio" useOpenSSHConfig="true">
+        <option name="customName" value="demelosAPP" />
+      </sshConfig>
+    </configs>
+  </component>
+</project>
