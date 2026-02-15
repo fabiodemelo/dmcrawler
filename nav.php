@@ -25,8 +25,12 @@
                     <a class="nav-link" href="view_emails.php">Emails</a>
                 </li>
                 <li class="nav-item">
+                    <a class="nav-link" href="admin_live_log.php">Live Log</a>
+                </li>
+                <li class="nav-item">
                     <a class="nav-link" href="settings.php">Settings</a>
                 </li>
+
             </ul>
             <ul class="navbar-nav">
                 <li class="nav-item">
