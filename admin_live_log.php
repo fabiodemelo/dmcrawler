@@ -15,7 +15,7 @@ require_once __DIR__ . '/auth_check.php';
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
     <style>
-        body { padding: 16px; }
+        /* match the rest of the admin pages (Bootstrap container spacing) */
         #logBox {
             height: 70vh;
             white-space: pre-wrap;
@@ -28,13 +28,17 @@ require_once __DIR__ . '/auth_check.php';
             font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
         }
         .muted { color: #64748b; }
+        .nowrap { white-space: nowrap; }
     </style>
 </head>
 <body>
-<div class="container-fluid">
-    <div class="d-flex align-items-center justify-content-between mb-3">
+
+<?php include __DIR__ . '/nav.php'; ?>
+
+<div class="container">
+    <div class="d-flex align-items-center justify-content-between mb-3 mt-3">
         <div>
-            <h4 class="mb-1">Live Crawler Log</h4>
+            <h1 class="h4 mb-1">Live Crawler Log</h1>
             <div class="muted" id="statusLine">Connecting…</div>
         </div>
         <div class="d-flex gap-2">
@@ -49,93 +53,97 @@ require_once __DIR__ . '/auth_check.php';
             <input class="form-check-input" type="checkbox" id="chkAutoscroll" checked>
             <label class="form-check-label" for="chkAutoscroll">Auto-scroll</label>
         </div>
-        <div class="muted">Polling: <span id="pollMs">1000</span>ms</div>
+        <div class="muted nowrap">Polling: <span id="pollMs">1000</span>ms</div>
     </div>
 
     <div id="logBox"></div>
+
+    <div class="text-muted mt-2 small">
+        Tip: If this stays empty, check that <code>crawler.log</code> is being written and that <code>log_api.php</code> returns JSON when opened directly.
+    </div>
 </div>
 
-<script>
-    (function () {
-        var logBox = document.getElementById('logBox');
-        var statusLine = document.getElementById('statusLine');
-        var chkAutoscroll = document.getElementById('chkAutoscroll');
+    <script>
+        (function () {
+            var logBox = document.getElementById('logBox');
+            var statusLine = document.getElementById('statusLine');
+            var chkAutoscroll = document.getElementById('chkAutoscroll');
 
-        var btnPause = document.getElementById('btnPause');
-        var btnResume = document.getElementById('btnResume');
-        var btnClear = document.getElementById('btnClear');
+            var btnPause = document.getElementById('btnPause');
+            var btnResume = document.getElementById('btnResume');
+            var btnClear = document.getElementById('btnClear');
 
-        var offset = 0;
-        var paused = false;
-        var timer = null;
-        var pollIntervalMs = 1000;
+            var offset = 0;
+            var paused = false;
+            var timer = null;
+            var pollIntervalMs = 1000;
 
-        function append(text) {
-            if (!text) return;
-            var atBottom = (logBox.scrollTop + logBox.clientHeight >= logBox.scrollHeight - 5);
-            logBox.textContent += text;
-            if (chkAutoscroll.checked && atBottom) {
-                logBox.scrollTop = logBox.scrollHeight;
+            function append(text) {
+                if (!text) return;
+                var atBottom = (logBox.scrollTop + logBox.clientHeight >= logBox.scrollHeight - 5);
+                logBox.textContent += text;
+                if (chkAutoscroll.checked && atBottom) {
+                    logBox.scrollTop = logBox.scrollHeight;
+                }
             }
-        }
 
-        function setStatus(s) {
-            statusLine.textContent = s;
-        }
+            function setStatus(s) {
+                statusLine.textContent = s;
+            }
 
-        function poll() {
-            if (paused) return;
+            function poll() {
+                if (paused) return;
 
-            fetch('log_api.php?offset=' + encodeURIComponent(String(offset)), {
-                credentials: 'same-origin',
-                cache: 'no-store'
-            })
-                .then(function (r) { return r.json(); })
-                .then(function (data) {
-                    if (!data || data.ok !== true) {
-                        setStatus('Error: ' + (data && data.error ? data.error : 'unknown'));
-                        return;
-                    }
-                    offset = data.nextOffset || 0;
-                    append(data.chunk || '');
-                    setStatus(
-                        'Crawler: ' + (data.crawlerRunning ? 'RUNNING' : 'IDLE') +
-                        ' | Log size: ' + data.fileSize +
-                        ' | Offset: ' + offset +
-                        (data.serverTime ? (' | Server: ' + data.serverTime) : '')
-                    );
+                fetch('log_api.php?offset=' + encodeURIComponent(String(offset)), {
+                    credentials: 'same-origin',
+                    cache: 'no-store'
                 })
-                .catch(function (e) {
-                    setStatus('Connection error: ' + (e && e.message ? e.message : e));
-                });
-        }
+                    .then(function (r) { return r.json(); })
+                    .then(function (data) {
+                        if (!data || data.ok !== true) {
+                            setStatus('Error: ' + (data && data.error ? data.error : 'unknown'));
+                            return;
+                        }
+                        offset = data.nextOffset || 0;
+                        append(data.chunk || '');
+                        setStatus(
+                            'Crawler: ' + (data.crawlerRunning ? 'RUNNING' : 'IDLE') +
+                            ' | Log size: ' + data.fileSize +
+                            ' | Offset: ' + offset +
+                            (data.serverTime ? (' | Server: ' + data.serverTime) : '')
+                        );
+                    })
+                    .catch(function (e) {
+                        setStatus('Connection error: ' + (e && e.message ? e.message : e));
+                    });
+            }
 
-        function start() {
-            if (timer) clearInterval(timer);
-            timer = setInterval(poll, pollIntervalMs);
-            poll();
-        }
+            function start() {
+                if (timer) clearInterval(timer);
+                timer = setInterval(poll, pollIntervalMs);
+                poll();
+            }
 
-        btnPause.addEventListener('click', function () {
-            paused = true;
-            btnPause.disabled = true;
-            btnResume.disabled = false;
-            setStatus('Paused');
-        });
+            btnPause.addEventListener('click', function () {
+                paused = true;
+                btnPause.disabled = true;
+                btnResume.disabled = false;
+                setStatus('Paused');
+            });
 
-        btnResume.addEventListener('click', function () {
-            paused = false;
-            btnPause.disabled = false;
-            btnResume.disabled = true;
-            poll();
-        });
+            btnResume.addEventListener('click', function () {
+                paused = false;
+                btnPause.disabled = false;
+                btnResume.disabled = true;
+                poll();
+            });
 
-        btnClear.addEventListener('click', function () {
-            logBox.textContent = '';
-        });
+            btnClear.addEventListener('click', function () {
+                logBox.textContent = '';
+            });
 
-        start();
-    })();
-</script>
-</body>
-</html>
+            start();
+        })();
+    </script>
+    </body>
+    </html>
