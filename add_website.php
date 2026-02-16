@@ -181,108 +181,61 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
     $message = '<div class="alert alert-' . htmlspecialchars($_GET['msg_type']) . '">' . htmlspecialchars($_GET['msg_text']) . '</div>';
 }
 
-// Handle filtering by status
-$filterStatus = $_GET['status'] ?? 'pending'; // Default to 'pending'
-$crawledFilter = '';
-if ($filterStatus === 'crawled') {
-    $crawledFilter = 'WHERE crawled = 1';
-} elseif ($filterStatus === 'pending') {
-    $crawledFilter = 'WHERE crawled = 0';
-} elseif ($filterStatus === 'all') {
-    $crawledFilter = ''; // No filter for 'all'
-}
+    // Handle filtering by status
+    $filterStatus = $_GET['status'] ?? 'pending'; // Default to 'pending'
 
-// Fetch total Domains yet to be crawled (corrected metric)
-$totalDomainsYetToCrawl = 0;
-// Count the number of domains that are marked as not yet crawled
-$resDomainsPending = $conn->query("SELECT COUNT(*) AS total_domains_pending FROM domains WHERE crawled = 0");
-if ($resDomainsPending) {
-    if ($row = $resDomainsPending->fetch_assoc()) {
-        $totalDomainsYetToCrawl = (int)$row['total_domains_pending'];
+    // Search term (part of the same filter form)
+    $search = isset($_GET['search']) ? trim((string)$_GET['search']) : '';
+
+    // Build a single WHERE clause that combines status + search
+    $whereParts = [];
+
+    if ($filterStatus === 'crawled') {
+        $whereParts[] = 'crawled = 1';
+    } elseif ($filterStatus === 'pending') {
+        $whereParts[] = 'crawled = 0';
+    } elseif ($filterStatus === 'all') {
+        // no status condition
     }
-} else {
-    error_log("Error fetching total domains pending: " . $conn->error);
-}
 
-
-// Pagination setup
-$records_per_page = 100; // Number of records to display per page
-$current_page = isset($_GET['p']) && is_numeric($_GET['p']) ? (int)$_GET['p'] : 1;
-if ($current_page < 1) $current_page = 1;
-
-// Get total number of records for the current filter
-$count_sql = "SELECT COUNT(*) AS total FROM domains {$crawledFilter}";
-$count_result = $conn->query($count_sql);
-$total_records = 0;
-if ($count_result) {
-    $total_records = $count_result->fetch_assoc()['total'];
-} else {
-    error_log("Error counting records for pagination: " . $conn->error . " SQL: " . $count_sql);
-}
-
-$total_pages = ceil($total_records / $records_per_page);
-// Ensure current page is not greater than total pages if records are deleted
-if ($current_page > $total_pages && $total_pages > 0) {
-    $current_page = $total_pages;
-}
-if ($total_pages == 0) { // If there are no records, ensure current_page is 1
-    $current_page = 1;
-}
-
-
-// Calculate the OFFSET for the SQL query
-$offset = ($current_page - 1) * $records_per_page;
-if ($offset < 0) $offset = 0; // Ensure offset is not negative
-
-// Function to generate sorting links
-// Updated to include 'p' parameter
-function sort_link($column, $text, $currentOrderBy, $currentOrderDir, $filterStatus, $currentPage) {
-    $dir = ($column == $currentOrderBy && $currentOrderDir == 'ASC') ? 'DESC' : 'ASC';
-    $icon = ($column == $currentOrderBy) ? ($currentOrderDir == 'ASC' ? ' <i class="fas fa-sort-up"></i>' : ' <i class="fas fa-sort-down"></i>') : '';
-    $params = $_GET;
-    $params['orderBy'] = $column;
-    $params['orderDir'] = $dir;
-    $params['status'] = $filterStatus; // Preserve status filter
-    $params['p'] = $currentPage; // Preserve current page
-    // Remove temporary message params that are not part of navigation/sorting
-    unset($params['action'], $params['id'], $params['msg_type'], $params['msg_text']);
-    $queryStr = http_build_query($params);
-    return "<a href='?{$queryStr}'>$text$icon</a>";
-}
-
-// Determine the ORDER BY clause
-$orderByParam = $_GET['orderBy'] ?? null;
-$orderDirParam = $_GET['orderDir'] ?? 'DESC';
-// Added 'donot' to valid sortable columns
-$valid_order_columns = ['id', 'domain', 'crawled', 'date_added', 'date_crawled', 'emails_found', 'urls_crawled', 'priority', 'donot'];
-
-if ($orderByParam && in_array($orderByParam, $valid_order_columns)) {
-    $orderByClause = "{$orderByParam} " . (in_array(strtoupper($orderDirParam), ['ASC', 'DESC']) ? $orderDirParam : 'DESC');
-    $orderBy = $orderByParam; // For highlighting current sort
-    $orderDir = $orderDirParam; // For highlighting current sort
-} else {
-    // Default sorting: pending (crawled=0) first, then by priority (1 before 0), then by id DESC
-    $orderByClause = "crawled ASC, priority DESC, id DESC";
-    $orderBy = 'crawled_priority_default'; // A dummy value to indicate default sort is active
-    $orderDir = 'DESC'; // Default direction
-}
-
-
-// Fetch domains for display with filter, sorting, and pagination
-$domains = [];
-// Added 'donot' to the SELECT clause
-$sql = "SELECT id, domain, crawled, date_added, date_crawled, emails_found, urls_crawled, priority, donot FROM domains {$crawledFilter} ORDER BY {$orderByClause} LIMIT {$records_per_page} OFFSET {$offset}";
-error_log("Executing SQL: " . $sql); // Log the executed SQL query
-$result = $conn->query($sql);
-if ($result) {
-    while ($row = $result->fetch_assoc()) {
-        $domains[] = $row;
+    if ($search !== '') {
+        $s = $conn->real_escape_string($search);
+        $whereParts[] = "domain LIKE '%{$s}%'";
     }
-    $result->free();
-} else {
-    $message = '<div class="alert alert-danger">Error fetching domains: ' . $conn->error . '</div>';
-    error_log("Error fetching domains with pagination: " . $conn->error . " SQL: " . $sql);
-}
+
+    $whereClause = !empty($whereParts) ? ('WHERE ' . implode(' AND ', $whereParts)) : '';
+
+    // ... existing code ...
+
+    // Get total number of records for the current filter
+    $count_sql = "SELECT COUNT(*) AS total FROM domains {$whereClause}";
+    $count_result = $conn->query($count_sql);
+    $total_records = 0;
+    if ($count_result) {
+        $total_records = (int)$count_result->fetch_assoc()['total'];
+    } else {
+        error_log("Error counting records for pagination: " . $conn->error . " SQL: " . $count_sql);
+    }
+
+    // ... existing code ...
+
+    // Fetch domains for display with filter, sorting, and pagination
+    $domains = [];
+    $sql = "SELECT id, domain, crawled, date_added, date_crawled, emails_found, urls_crawled, priority, donot
+            FROM domains {$whereClause}
+            ORDER BY {$orderByClause}
+            LIMIT {$records_per_page} OFFSET {$offset}";
+    error_log("Executing SQL: " . $sql); // Log the executed SQL query
+    $result = $conn->query($sql);
+    if ($result) {
+        while ($row = $result->fetch_assoc()) {
+            $domains[] = $row;
+        }
+        $result->free();
+    } else {
+        $message = '<div class="alert alert-danger">Error fetching domains: ' . $conn->error . '</div>';
+        error_log("Error fetching domains with pagination: " . $conn->error . " SQL: " . $sql);
+    }
 ?>
 <!DOCTYPE html>
 <html>
@@ -293,13 +246,8 @@ if ($result) {
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         .table td, .table th { vertical-align: middle; }
-        .form-control-sm-inline {
-            width: 100%;
-        }
-        .domain-column {
-            max-width: 300px; /* Set max width for domain column */
-            word-wrap: break-word; /* Break long words */
-        }
+        .form-control-sm-inline { width: 100%; }
+        .domain-column { max-width: 300px; word-wrap: break-word; }
         .actions-col { width: 120px; }
     </style>
 </head>
@@ -309,150 +257,33 @@ if ($result) {
 <div class="container mt-4">
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h1>Manage Domains <small class="text-muted">(Total Domains Yet to Crawl: <?= number_format($totalDomainsYetToCrawl) ?>)</small></h1>
-        <form method="get" class="d-flex align-items-center">
+
+        <!-- Single filter form: status + search (no separate search script/form) -->
+        <form method="get" class="d-flex align-items-center gap-2">
             <label for="statusFilter" class="me-2 mb-0">Show:</label>
-            <select name="status" id="statusFilter" class="form-select form-select-sm" onchange="this.form.submit()">
+            <select name="status" id="statusFilter" class="form-select form-select-sm" onchange="this.form.p.value=1; this.form.submit()">
                 <option value="pending" <?= $filterStatus === 'pending' ? 'selected' : '' ?>>Pending</option>
                 <option value="crawled" <?= $filterStatus === 'crawled' ? 'selected' : '' ?>>Crawled</option>
                 <option value="all" <?= $filterStatus === 'all' ? 'selected' : '' ?>>All</option>
             </select>
+
+            <input type="text"
+                   name="search"
+                   class="form-control form-control-sm"
+                   style="width:260px"
+                   placeholder="Filter by domain..."
+                   value="<?= htmlspecialchars($search, ENT_QUOTES) ?>"
+                   onkeydown="if(event.key==='Enter'){this.form.p.value=1; this.form.submit();}">
+
+            <button type="submit" class="btn btn-outline-primary btn-sm" onclick="this.form.p.value=1;">Apply</button>
+            <a class="btn btn-outline-secondary btn-sm" href="add_website.php?status=<?= htmlspecialchars($filterStatus, ENT_QUOTES) ?>">Clear</a>
+
             <input type="hidden" name="orderBy" value="<?= htmlspecialchars($orderBy) ?>">
             <input type="hidden" name="orderDir" value="<?= htmlspecialchars($orderDir) ?>">
-            <input type="hidden" name="p" value="<?= htmlspecialchars($current_page) ?>"> <!-- Preserve page on filter change -->
+            <input type="hidden" name="p" value="<?= htmlspecialchars($current_page) ?>">
         </form>
     </div>
 
     <?= $message ?>
 
-    <div class="card mb-4">
-        <div class="card-header">
-            Add New Domain
-        </div>
-        <div class="card-body">
-            <form method="post" class="row g-3 align-items-center">
-                <input type="hidden" name="action" value="add">
-                <div class="col-md-8">
-                    <label for="newDomain" class="visually-hidden">New Domain</label>
-                    <input type="text" class="form-control" id="newDomain" name="domain" placeholder="e.g., example.com" required>
-                </div>
-                <div class="col-md-4">
-                    <button type="submit" class="btn btn-success w-100"><i class="fas fa-plus"></i> Add Domain</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <div class="table-responsive">
-        <table class="table table-striped table-bordered table-hover table-sm">
-            <thead class="table-success">
-            <tr>
-                <th><?= sort_link('id', 'ID', $orderBy, $orderDir, $filterStatus, $current_page) ?></th>
-                <th class="domain-column"><?= sort_link('domain', 'Domain', $orderBy, $orderDir, $filterStatus, $current_page) ?></th>
-                <th><?= sort_link('crawled', 'Crawled?', $orderBy, $orderDir, $filterStatus, $current_page) ?></th>
-                <th><?= sort_link('date_added', 'Date Added', $orderBy, $orderDir, $filterStatus, $current_page) ?></th>
-                <th><?= sort_link('date_crawled', 'Last Crawled', $orderBy, $orderDir, $filterStatus, $current_page) ?></th>
-                <th><?= sort_link('emails_found', 'Emails', $orderBy, $orderDir, $filterStatus, $current_page) ?></th>
-                <th><?= sort_link('urls_crawled', 'URLs', $orderBy, $orderDir, $filterStatus, $current_page) ?></th>
-                <th><?= sort_link('priority', 'Priority', $orderBy, $orderDir, $filterStatus, $current_page) ?></th>
-                <th><?= sort_link('donot', 'Do Not Crawl', $orderBy, $orderDir, $filterStatus, $current_page) ?></th> <!-- New table header for Donot -->
-                <th class="text-end actions-col">Actions</th>
-            </tr>
-            </thead>
-            <tbody>
-            <?php if (!empty($domains)): ?>
-                <?php foreach ($domains as $row): ?>
-                    <tr>
-                        <td><?= htmlspecialchars($row['id']) ?></td>
-                        <td class="domain-column">
-                            <form id="updateForm_<?= $row['id'] ?>" method="post" class="d-inline-block w-100">
-                                <input type="hidden" name="action" value="update">
-                                <input type="hidden" name="id" value="<?= htmlspecialchars($row['id']) ?>">
-                                <input type="text" name="domain" class="form-control form-control-sm-inline" value="<?= htmlspecialchars($row['domain']) ?>" required>
-                            </form>
-                        </td>
-                        <td>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="crawledSwitch_<?= $row['id'] ?>" form="updateForm_<?= $row['id'] ?>" name="crawled" value="1" <?= $row['crawled'] ? 'checked' : '' ?>>
-                                <label class="form-check-label" for="crawledSwitch_<?= $row['id'] ?>"></label>
-                            </div>
-                        </td>
-                        <td><?= htmlspecialchars($row['date_added'] ?? 'N/A') ?></td>
-                        <td><?= htmlspecialchars($row['date_crawled'] ?? 'N/A') ?></td>
-                        <td><?= htmlspecialchars($row['emails_found']) ?></td>
-                        <td><?= htmlspecialchars($row['urls_crawled']) ?></td>
-                        <td>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="prioritySwitch_<?= $row['id'] ?>" form="updateForm_<?= $row['id'] ?>" name="priority" value="1" <?= ($row['priority'] ?? 0) == 1 ? 'checked' : '' ?>>
-                                <label class="form-check-label" for="prioritySwitch_<?= $row['id'] ?>"></label>
-                            </div>
-                        </td>
-                        <td>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="donotSwitch_<?= $row['id'] ?>" form="updateForm_<?= $row['id'] ?>" name="donot" value="1" <?= ($row['donot'] ?? 0) == 1 ? 'checked' : '' ?>>
-                                <label class="form-check-label" for="donotSwitch_<?= $row['id'] ?>"></label>
-                            </div>
-                        </td>
-                        <td class="text-end actions-col">
-                            <button type="submit" form="updateForm_<?= $row['id'] ?>" class="btn btn-sm btn-primary me-1" title="Save Changes" onclick="return confirm('Save changes for domain ID <?= $row['id'] ?>?');"><i class="fas fa-save"></i></button>
-                            <form method="post" class="d-inline-block" onsubmit="return confirm('Permanently delete domain ID <?= $row['id'] ?> and all associated emails?');">
-                                <input type="hidden" name="action" value="delete">
-                                <input type="hidden" name="id" value="<?= htmlspecialchars($row['id']) ?>">
-                                <button type="submit" class="btn btn-sm btn-danger" title="Delete Domain"><i class="fas fa-trash"></i></button>
-                            </form>
-                        </td>
-                    </tr>
-                <?php endforeach; ?>
-            <?php else: ?>
-                <tr>
-                    <td colspan="10" class="text-center text-muted py-4">No domains found for the current filter.</td> <!-- Adjusted colspan -->
-                </tr>
-            <?php endif; ?>
-            </tbody>
-        </table>
-    </div>
-
-    <?php if ($total_pages > 1): ?>
-        <nav aria-label="Page navigation">
-            <ul class="pagination justify-content-center">
-                <li class="page-item <?= ($current_page <= 1) ? 'disabled' : '' ?>">
-                    <?php
-                    $prev_params = $_GET;
-                    $prev_params['p'] = $current_page - 1;
-                    unset($prev_params['msg_type'], $prev_params['msg_text']);
-                    $prev_query_str = http_build_query($prev_params);
-                    ?>
-                    <a class="page-link" href="?<?= $prev_query_str ?>" aria-label="Previous">
-                        <span aria-hidden="true">&laquo;</span>
-                    </a>
-                </li>
-                <?php for ($i = 1; $i <= $total_pages; $i++): ?>
-                    <li class="page-item <?= ($current_page == $i) ? 'active' : '' ?>">
-                        <?php
-                        $page_params = $_GET;
-                        $page_params['p'] = $i;
-                        unset($page_params['msg_type'], $page_params['msg_text']);
-                        $page_query_str = http_build_query($page_params);
-                        ?>
-                        <a class="page-link" href="?<?= $page_query_str ?>"><?= $i ?></a>
-                    </li>
-                <?php endfor; ?>
-                <li class="page-item <?= ($current_page >= $total_pages) ? 'disabled' : '' ?>">
-                    <?php
-                    $next_params = $_GET;
-                    $next_params['p'] = $current_page + 1;
-                    unset($next_params['msg_type'], $next_params['msg_text']);
-                    $next_query_str = http_build_query($next_params);
-                    ?>
-                    <a class="page-link" href="?<?= $next_query_str ?>" aria-label="Next">
-                        <span aria-hidden="true">&raquo;</span>
-                    </a>
-                </li>
-            </ul>
-        </nav>
-    <?php endif; ?>
-
-</div>
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-</body>
-</html>
+    <!-- ... existing code ... -->

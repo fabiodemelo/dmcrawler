@@ -1,3 +1,4 @@
+```php
 <?php
 // crawler.php - Crawls websites for emails with live progress and settings.
 // Requires: db.php for MySQLi connection ($conn)
@@ -244,7 +245,7 @@ if (!function_exists('start_streaming_ui')) {
         @ini_set('implicit_flush', '1');
         @ini_set('zlib.output_compression', '0');
         while (@ob_get_level() > 0) { @ob_end_flush(); }
-        @ob_implicit_flush(true); // Fix: changed from 1 to true
+        @ob_implicit_flush(1); // FIX: PHP 7.x expects int (1/0), not boolean true
 
         if (php_sapi_name() === 'cli') {
             force_flush(); // Ensure output is not buffered in CLI either
@@ -350,12 +351,23 @@ if (!function_exists('has_bad_extension')) {
 }
 // ======= END New Email Validation Helpers =======
 
-// ======= New Email Validation Helpers =======
-if (!function_exists('is_valid_email_format')) {
-    function is_valid_email_format($email) {
-        return filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
+    // PHP 7.1 compatibility helper (str_ends_with is PHP 8+)
+    if (!function_exists('ends_with')) {
+        function ends_with($haystack, $needle) {
+            $haystack = (string)$haystack;
+            $needle = (string)$needle;
+            if ($needle === '') return true;
+            $len = strlen($needle);
+            return $len === 0 ? true : (substr($haystack, -$len) === $needle);
+        }
     }
-}
+
+    // ======= New Email Validation Helpers =======
+    if (!function_exists('is_valid_email_format')) {
+        function is_valid_email_format($email) {
+            return filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
+        }
+    }
 if (!function_exists('has_bad_extension')) {
     function has_bad_extension($email) {
         // Flag common file extensions that indicate a bad scrape (e.g., image names mistaken for emails)
@@ -365,7 +377,7 @@ if (!function_exists('has_bad_extension')) {
 if (!function_exists('has_allowed_extension')) {
     function has_allowed_extension($email) {
         $allowed_extensions = [
-            '.com', '.net', '.org', '.co', '.io', '.us', '.gov', '.ca', '.edu', '.mil', '.ai', '.dev', '.app','.me','.biz','.app', '.tech'
+            '.com', '.net', '.org', '.co', '.io', '.us', '.gov', '.ca', '.edu', '.mil', '.ai', '.dev', '.app', '.me', '.biz', '.tech'
         ];
         $email_parts = explode('@', $email);
         if (count($email_parts) < 2) {
@@ -373,7 +385,7 @@ if (!function_exists('has_allowed_extension')) {
         }
         $domain = $email_parts[1];
         foreach ($allowed_extensions as $ext) {
-            if (str_ends_with($domain, $ext)) {
+            if (ends_with($domain, $ext)) { // FIX: PHP 7.1 compatible
                 return true;
             }
         }
@@ -421,123 +433,143 @@ if (!function_exists('normalize_url')) {
 
 // ======= Main Crawler Logic =======
 
-function crawl_page($url, $domain, &$visited, &$email_count, $domain_id, $page_delay, $depth, $max_depth) {
-    if ($depth > $max_depth) {
-        log_activity("Max depth reached at $url");
-        stream_message("Max depth reached at $url");
-        if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, count($visited), $email_count, $GLOBALS['__crawl_t0']);
-        return;
-    }
+    function crawl_page($url, $domain, &$visited, &$email_count, $domain_id, $page_delay, $depth, $max_depth) {
+        if ($depth > $max_depth) {
+            log_activity("Max depth reached at $url");
+            stream_message("Max depth reached at $url");
+            if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, count($visited), $email_count, $GLOBALS['__crawl_t0']);
+            return;
+        }
 
-    $url = strtok($url, '#'); // Remove fragment identifiers
-    if (isset($visited[$url])) return;
-    $visited[$url] = true;
+        $url = strtok($url, '#'); // Remove fragment identifiers
 
-    $pagesCrawled = count($visited);
-    $minPages = get_min_pages_threshold();
-    $thresholdReached = ($minPages > 0 && $pagesCrawled >= $minPages);
-    if ($thresholdReached) {
-        mark_domain_crawled_once($domain_id);
-    }
+        // FIX: fully decode HTML entities (handles &amp;amp; chains)
+        $rawUrl = $url;
+        for ($i = 0; $i < 5; $i++) {
+            $decoded = html_entity_decode($url, ENT_QUOTES, 'UTF-8');
+            if ($decoded === $url) break;
+            $url = $decoded;
+        }
+        $url = str_replace('amp;', '', $url); // defensive cleanup for broken markup
 
-    log_activity("Visiting page: $url (Depth: $depth)");
-    stream_message("Visiting page: $url (Depth: $depth) | Pages crawled so far: {$pagesCrawled}");
-    if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, $pagesCrawled, $email_count, $GLOBALS['__crawl_t0']);
+        if (isset($visited[$url])) return;
+        $visited[$url] = true;
 
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36');
-    curl_setopt($ch, CURLOPT_REFERER, 'https://www.google.com/');
-    curl_setopt($ch, CURLOPT_ENCODING, '');
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 20);
-    curl_setopt($ch, CURLOPT_LOW_SPEED_LIMIT, 300);
-    curl_setopt($ch, CURLOPT_LOW_SPEED_TIME, 8);
-    curl_setopt($ch, CURLOPT_NOSIGNAL, true);
-    curl_setopt($ch, CURLOPT_NOPROGRESS, false);
-    curl_setopt($ch, CURLOPT_PROGRESSFUNCTION, 'curl_progress_echo');
+        $pagesCrawled = count($visited);
+        $minPages = get_min_pages_threshold();
+        $thresholdReached = ($minPages > 0 && $pagesCrawled >= $minPages);
+        if ($thresholdReached) {
+            mark_domain_crawled_once($domain_id);
+        }
 
-    $html = curl_exec($ch);
-    $curl_err = curl_error($ch);
-    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+        // Log the cleaned URL so you can confirm it’s fixed
+        log_activity("Visiting page: $url (Depth: $depth)");
+        stream_message("Visiting page: $url (Depth: $depth) | Pages crawled so far: {$pagesCrawled}");
+        if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, $pagesCrawled, $email_count, $GLOBALS['__crawl_t0']);
 
-    if ($html === false) {
-        log_activity("Error fetching page: $url (cURL: $curl_err)");
-        stream_message("Error fetching page: $url");
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36');
+        curl_setopt($ch, CURLOPT_REFERER, 'https://www.google.com/');
+        curl_setopt($ch, CURLOPT_ENCODING, '');
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+        curl_setopt($ch, CURLOPT_LOW_SPEED_LIMIT, 300);
+        curl_setopt($ch, CURLOPT_LOW_SPEED_TIME, 8);
+        curl_setopt($ch, CURLOPT_NOSIGNAL, true);
+        curl_setopt($ch, CURLOPT_NOPROGRESS, false);
+        curl_setopt($ch, CURLOPT_PROGRESSFUNCTION, 'curl_progress_echo');
+
+        $html = curl_exec($ch);
+        $curl_err = curl_error($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($html === false) {
+            log_activity("Error fetching page: $url (cURL: $curl_err)");
+            stream_message("Error fetching page: $url");
+            update_domain_progress($domain_id, $email_count, count($visited));
+            if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, count($visited), $email_count, $GLOBALS['__crawl_t0']);
+            return;
+        }
+        if ($http_code >= 400) {
+            log_activity("HTTP $http_code at $url");
+            stream_message("HTTP $http_code at $url");
+            update_domain_progress($domain_id, $email_count, count($visited));
+            if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, count($visited), $email_count, $GLOBALS['__crawl_t0']);
+            return;
+        }
+
+        $decoded_html = html_entity_decode($html);
+
+        preg_match_all('/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/', $decoded_html, $matches);
+        global $conn;
+        $emails = array_unique($matches[0]);
+        foreach ($emails as $email) {
+            // Basic cleanup: remove leading/trailing whitespace and ensure lowercase for canonical form
+            $email = trim(strtolower($email));
+
+            // Validate email format and check for bad extensions before processing
+            if (!is_valid_email_format($email) || has_bad_extension($email)) {
+                log_activity("Skipping invalid or malformed email: {$email} on {$url}");
+                continue; // Skip to the next email if invalid
+            }
+
+            $email = $conn->real_escape_string($email);
+            $check_res = $conn->query("SELECT id FROM emails WHERE email = '$email' AND domain_id = $domain_id");
+            if ($check_res->num_rows == 0) {
+                $conn->query("INSERT INTO emails (domain_id, name, email) VALUES ($domain_id, '', '$email')");
+                log_activity("Found email: $email on $url");
+                stream_message("Found email: $email on $url");
+                $email_count++;
+                if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, count($visited), $email_count, $GLOBALS['__crawl_t0']);
+            }
+        }
+
         update_domain_progress($domain_id, $email_count, count($visited));
         if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, count($visited), $email_count, $GLOBALS['__crawl_t0']);
-        return;
-    }
-    if ($http_code >= 400) {
-        log_activity("HTTP $http_code at $url");
-        stream_message("HTTP $http_code at $url");
-        update_domain_progress($domain_id, $email_count, count($visited));
-        if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, count($visited), $email_count, $GLOBALS['__crawl_t0']);
-        return;
-    }
 
-    $decoded_html = html_entity_decode($html);
+        preg_match_all('/<a\s+(?:[^>]*?\s+)?href=["\']([^"\']+)["\']/i', $html, $links);
+        $totalLinks = isset($links[1]) ? count($links[1]) : 0;
+        stream_message("Discovered {$totalLinks} links on: $url");
+        force_flush();
 
-    preg_match_all('/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/', $decoded_html, $matches);
-    global $conn;
-    $emails = array_unique($matches[0]);
-    foreach ($emails as $email) {
-        // Basic cleanup: remove leading/trailing whitespace and ensure lowercase for canonical form
-        $email = trim(strtolower($email));
-
-        // Validate email format and check for bad extensions before processing
-        if (!is_valid_email_format($email) || has_bad_extension($email)) {
-            log_activity("Skipping invalid or malformed email: {$email} on {$url}");
-            continue; // Skip to the next email if invalid
+        $sleepFor = rand($page_delay[0], $page_delay[1]);
+        if ($sleepFor > 0) {
+            $step = max(1, min(2, $sleepFor));
+            for ($left = $sleepFor; $left > 0; $left -= $step) {
+                $show = max(0, $left - $step);
+                stream_message("Waiting ~{$show}s before following links...");
+                if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, count($visited), $email_count, $GLOBALS['__crawl_t0']);
+                force_flush();
+                sleep($step);
+            }
         }
 
-        $email = $conn->real_escape_string($email);
-        $check_res = $conn->query("SELECT id FROM emails WHERE email = '$email' AND domain_id = $domain_id");
-        if ($check_res->num_rows == 0) {
-            $conn->query("INSERT INTO emails (domain_id, name, email) VALUES ($domain_id, '', '$email')");
-            log_activity("Found email: $email on $url");
-            stream_message("Found email: $email on $url");
-            $email_count++;
-            if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, count($visited), $email_count, $GLOBALS['__crawl_t0']);
+        foreach ($links[1] as $link) {
+            // FIX: decode href entities too
+            for ($i = 0; $i < 5; $i++) {
+                $decoded = html_entity_decode($link, ENT_QUOTES, 'UTF-8');
+                if ($decoded === $link) break;
+                $link = $decoded;
+            }
+            $link = str_replace('amp;', '', $link);
+
+            if (stripos($link, 'cdn-cgi') !== false || stripos($link, 'mailto:') === 0 || preg_match('/\.(jpg|jpeg|png|gif|pdf|zip|css|js)$/i', $link)) {
+                continue;
+            }
+
+            $absolute_link = normalize_url($url, $link);
+            $parsed = parse_url($absolute_link);
+            if (isset($parsed['host']) && str_replace('www.', '', $parsed['host']) !== str_replace('www.', '', $domain)) continue;
+
+            // FIX: depth must increment (do NOT reset to 0)
+            crawl_page($absolute_link, $domain, $visited, $email_count, $domain_id, $page_delay, $depth + 1, $max_depth);
         }
     }
-
-    update_domain_progress($domain_id, $email_count, count($visited));
-    if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, count($visited), $email_count, $GLOBALS['__crawl_t0']);
-
-    preg_match_all('/<a\s+(?:[^>]*?\s+)?href=["\']([^"\']+)["\']/i', $html, $links);
-    $totalLinks = isset($links[1]) ? count($links[1]) : 0;
-    stream_message("Discovered {$totalLinks} links on: $url");
-    force_flush();
-
-    $sleepFor = rand($page_delay[0], $page_delay[1]);
-    if ($sleepFor > 0) {
-        $step = max(1, min(2, $sleepFor));
-        for ($left = $sleepFor; $left > 0; $left -= $step) {
-            $show = max(0, $left - $step);
-            stream_message("Waiting ~{$show}s before following links...");
-            if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, count($visited), $email_count, $GLOBALS['__crawl_t0']);
-            force_flush();
-            sleep($step);
-        }
-    }
-
-    foreach ($links[1] as $link) {
-        if (stripos($link, 'cdn-cgi') !== false || stripos($link, 'mailto:') === 0 || preg_match('/\.(jpg|jpeg|png|gif|pdf|zip|css|js)$/i', $link)) {
-            continue;
-        }
-
-        $absolute_link = normalize_url($url, $link);
-        $parsed = parse_url($absolute_link);
-        if (isset($parsed['host']) && str_replace('www.', '', $parsed['host']) !== str_replace('www.', '', $domain)) continue;
-
-        crawl_page($absolute_link, $domain, $visited, $email_count, $domain_id, $page_delay, 0, $max_depth);
-    }
-}
 
 // ======= Main Execution Block =======
 start_streaming_ui();
@@ -564,11 +596,11 @@ $domain_delay = [
 if ($domain_delay[0] < 0) $domain_delay[0] = 0;
 if ($domain_delay[1] < $domain_delay[0]) $domain_delay[1] = $domain_delay[0];
 
-$max_depth = (int) (get_setting_value('max_depth') ?? 20);
+$max_depth = (int)(get_setting_value('max_depth') ?? 3);
 if ($max_depth < 0) $max_depth = 0;
 
 // New email notification toggles for crawler
-$EMAIL_TO = get_setting_value('email_to') ?? 'fabio@demelos.com';
+$EMAIL_TO = get_setting_value('email_to') ?? '';
 $EMAIL_FROM = get_setting_value('email_from') ?? 'no-reply@demelos.com';
 $EMAIL_SUBJ_PREFIX = get_setting_value('email_subj_prefix') ?? 'Crawler Report';
 $ENABLE_EMAIL_CRAWLER_SUCCESS = (int)(get_setting_value('enable_email_crawler_success') ?? 1);
@@ -582,14 +614,13 @@ if (!ensure_db_connection()) {
     $crawler_errors[] = $error_msg;
     release_lock($__lock);
     end_streaming_ui();
-    // If you want to send an email on this fatal error:
-    // if ($ENABLE_EMAIL_CRAWLER_ERROR === 1 && !empty($EMAIL_TO)) { /* mail() logic */ }
     exit(1);
 }
 
 $domains_processed_count = 0;
 $total_emails_found_in_run = 0;
 
+global $conn;
 $res = $conn->query("SELECT * FROM domains WHERE crawled = 0 AND donot = 0 ORDER BY priority DESC, id ASC LIMIT 1");
 if ($res === false) {
     $error_msg = "DB Error fetching domain: " . $conn->error;
@@ -597,71 +628,73 @@ if ($res === false) {
     $crawler_errors[] = $error_msg;
     release_lock($__lock);
     end_streaming_ui();
-    // if ($ENABLE_EMAIL_CRAWLER_ERROR === 1 && !empty($EMAIL_TO)) { /* mail() logic */ }
     exit(1);
 }
 
 if ($row = $res->fetch_assoc()) {
     $domains_processed_count++;
-    $domain_id = $row['id'];
-    $domain_to_crawl = $row['domain'];
+    $domain_id = (int)$row['id'];
+    $domain_to_crawl = (string)$row['domain'];
+
     // Ensure starting URL is absolute with scheme
-    $start_url = preg_match('/^https?:\/\//i', $domain_to_crawl) ? $domain_to_crawl : "https://$domain_to_crawl";
-    $host_domain = parse_url($start_url, PHP_URL_HOST);
+    $start_url = preg_match('/^https?:\/\//i', $domain_to_crawl) ? $domain_to_crawl : ("https://" . $domain_to_crawl);
+    $host_domain = (string)parse_url($start_url, PHP_URL_HOST);
 
-    $GLOBALS['__crawl_t0'] = microtime(true); // Global start time for HUD
+    if ($host_domain === '') {
+        $error_msg = "Invalid domain/start URL: {$start_url}";
+        log_activity($error_msg);
+        stream_message($error_msg);
+        $crawler_errors[] = $error_msg;
+    } else {
+        $GLOBALS['__crawl_t0'] = microtime(true);
 
-    log_activity("START Crawl domain: $host_domain");
-    stream_message("=== START Crawl: $host_domain ===");
-    stream_stats_crawler($host_domain, 0, 0, $GLOBALS['__crawl_t0']); // Initialize HUD
+        log_activity("START Crawl domain: $host_domain");
+        stream_message("=== START Crawl: $host_domain ===");
+        stream_stats_crawler($host_domain, 0, 0, $GLOBALS['__crawl_t0']);
 
-    $visited = [];
-    $email_count = 0;
-    crawl_page($start_url, $host_domain, $visited, $email_count, $domain_id, $page_delay, 0, $max_depth);
+        $visited = [];
+        $email_count = 0;
 
-    $urls_crawled_count = count($visited);
-    $total_emails_found_in_run += $email_count;
+        crawl_page($start_url, $host_domain, $visited, $email_count, $domain_id, $page_delay, 0, $max_depth);
 
-    // Update domain status in DB
-    $update_stmt = $conn->prepare("UPDATE domains SET crawled = 1, date_crawled = NOW(), emails_found = ?, urls_crawled = ? WHERE id = ?");
-    if ($update_stmt) {
-        $update_stmt->bind_param('iii', $email_count, $urls_crawled_count, $domain_id);
-        if (!$update_stmt->execute()) {
-            $error_msg = "DB Error updating domain {$domain_id} progress: " . $update_stmt->error;
+        $urls_crawled_count = count($visited);
+        $total_emails_found_in_run += $email_count;
+
+        $update_stmt = $conn->prepare("UPDATE domains SET crawled = 1, date_crawled = NOW(), emails_found = ?, urls_crawled = ? WHERE id = ?");
+        if ($update_stmt) {
+            $update_stmt->bind_param('iii', $email_count, $urls_crawled_count, $domain_id);
+            if (!$update_stmt->execute()) {
+                $error_msg = "DB Error updating domain {$domain_id}: " . $update_stmt->error;
+                log_activity($error_msg);
+                $crawler_errors[] = $error_msg;
+            }
+            $update_stmt->close();
+        } else {
+            $error_msg = "DB Error preparing update for domain {$domain_id}: " . $conn->error;
             log_activity($error_msg);
             $crawler_errors[] = $error_msg;
         }
-        $update_stmt->close();
-    } else {
-        $error_msg = "DB Error preparing update for domain {$domain_id}: " . $conn->error;
-        log_activity($error_msg);
-        $crawler_errors[] = $error_msg;
+
+        log_activity("END Crawl domain: $host_domain. Found $email_count emails and crawled $urls_crawled_count URLs.");
+        stream_message("=== END Crawl: $host_domain | Emails: $email_count | Pages: $urls_crawled_count ===");
+        stream_stats_crawler($host_domain, $urls_crawled_count, $email_count, $GLOBALS['__crawl_t0']);
+
+        $domainSleepSeconds = rand($domain_delay[0] * 60, $domain_delay[1] * 60);
+        if ($domainSleepSeconds > 0) {
+            stream_message("Waiting for " . $domainSleepSeconds . "s before next domain.");
+            sleep($domainSleepSeconds);
+        }
     }
-
-
-    log_activity("END Crawl domain: $host_domain. Found $email_count emails and crawled $urls_crawled_count URLs.");
-    stream_message("=== END Crawl: $host_domain | Emails: $email_count | Pages: $urls_crawled_count ===");
-    stream_stats_crawler($host_domain, $urls_crawled_count, $email_count, $GLOBALS['__crawl_t0']); // Final HUD update
-
-    // Delay before potentially starting another domain (in minutes, converted to seconds then microseconds for usleep)
-    $domainSleepSeconds = rand($domain_delay[0] * 60, $domain_delay[1] * 60);
-    if ($domainSleepSeconds > 0) {
-        stream_message("Waiting for " . $domainSleepSeconds . "s before next domain.");
-        sleep($domainSleepSeconds);
-    }
-
 } else {
     stream_message("No domains found for crawling. Exiting.");
 }
 
-release_lock($__lock); // Release lock when done
-end_streaming_ui(); // Close browser streaming UI
+release_lock($__lock);
+end_streaming_ui();
 
-
-// --- Send final summary email for crawler.php ---
-// This block should be at the very end of your script, after all processing is done.
+// --- Send final summary email ---
 $summary_subject_suffix = (empty($crawler_errors) ? 'Success' : 'Completed with Errors');
-$summary_subject = $EMAIL_SUBJ_PREFIX . ' - Crawler (' . ($domains_processed_count > 0 ? 'Domains Processed: ' . $domains_processed_count : 'No Domains Processed') . ') - ' . $summary_subject_suffix;
+$summary_subject = $EMAIL_SUBJ_PREFIX . ' - Crawler (' . ($domains_processed_count > 0 ? ('Domains Processed: ' . $domains_processed_count) : 'No Domains Processed') . ') - ' . $summary_subject_suffix;
 
 $summary_body = [];
 $summary_body[] = "Crawler Run Summary (" . date('Y-m-d H:i:s') . ")";
@@ -671,11 +704,13 @@ $summary_body[] = "Total Emails Found in Run: " . $total_emails_found_in_run;
 $summary_body[] = "Errors Encountered: " . (empty($crawler_errors) ? 'None' : count($crawler_errors));
 
 if (!empty($crawler_errors)) {
-    $summary_body[] = "\n--- Details of Errors ---";
+    $summary_body[] = "";
+    $summary_body[] = "--- Details of Errors ---";
     foreach ($crawler_errors as $err) {
         $summary_body[] = "- " . $err;
     }
 }
+
 $summary_body[] = "------------------------------------------";
 $summary_body[] = "This report is generated by the crawler.php script.";
 
@@ -687,10 +722,10 @@ $headers = 'From: ' . $EMAIL_FROM . "\r\n" .
 
 if (!empty($EMAIL_TO)) {
     if (empty($crawler_errors) && $ENABLE_EMAIL_CRAWLER_SUCCESS === 1) {
-        mail($EMAIL_TO, $summary_subject, $summary_message, $headers);
+        @mail($EMAIL_TO, $summary_subject, $summary_message, $headers);
         log_activity("Crawler success summary email sent to: " . $EMAIL_TO);
     } elseif (!empty($crawler_errors) && $ENABLE_EMAIL_CRAWLER_ERROR === 1) {
-        mail($EMAIL_TO, $summary_subject, $summary_message, $headers);
+        @mail($EMAIL_TO, $summary_subject, $summary_message, $headers);
         log_activity("Crawler error summary email sent to: " . $EMAIL_TO);
     }
 }

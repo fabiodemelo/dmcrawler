@@ -1,51 +1,111 @@
 <?php
-// status_api.php
-// This API endpoint checks for the existence of .running lock files
-// created by your background scripts to determine their status.
+header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
-header('Content-Type: application/json');
+$base_dir = __DIR__ . '/';
 
-$status = [];
-// IMPORTANT: Adjust this base directory if your demelos project is installed elsewhere
-$base_dir = __DIR__ . '/'; // This assumes status_api.php is in the root of your demelos project
-
-$scripts_to_monitor = [
-    'crawler' => 'crawler.php',        // For "Run Crawler (Domains)" button
-    'geturls' => 'getURLS.php',        // For "Get URLs" button
-    'getemails' => 'crawler.php',      // For "Get Emails" button (assuming it also runs crawler.php)
-    'addtomautic' => 'addtomautic.php' // For "Send Emails to Mautic" button
-];
-
-foreach ($scripts_to_monitor as $key => $script_filename) {
-    // Generate a unique lock file name for each *logical* task, even if they share an underlying script.
-    // For "Get Emails", we'll make its lock file 'getemails.running' to differentiate its status
-    // from the general 'crawler.running' status, even if both call 'crawler.php'.
-    $lock_file_name = str_replace('.php', '', $script_filename) . '.' . $key . '.running';
-
-    // Special handling for the main 'crawler' process to use 'crawler.running'
-    if ($key === 'crawler' && $script_filename === 'crawler.php') {
-        $lock_file_name = 'crawler.running';
-    } elseif ($key === 'getemails' && $script_filename === 'crawler.php') {
-        // If 'getemails' is truly a distinct invocation of 'crawler.php' that you want to monitor separately,
-        // it needs a distinct lock file name, e.g., 'crawler.getemails.running'.
-        // Otherwise, if it's just another way to say 'run the crawler', you might use 'crawler.running'.
-        // For distinct monitoring, we'll assign a distinct lock name here.
-        $lock_file_name = 'crawler.getemails.running'; // Unique lock for the "Get Emails" task
+function safe_read_started_at($filePath) {
+    $raw = @file_get_contents($filePath);
+    $raw = is_string($raw) ? trim($raw) : '';
+    if ($raw !== '') {
+        $ts = strtotime($raw);
+        if ($ts !== false) return (int)$ts;
     }
-
-
-    $lock_file_path = $base_dir . $lock_file_name;
-
-    if (file_exists($lock_file_path)) {
-        $started_at = @file_get_contents($lock_file_path); // Get the content (timestamp)
-        $status[$key] = [
-            'running' => true,
-            'started_at' => $started_at ? trim($started_at) : 'unknown time'
-        ];
-    } else {
-        $status[$key] = ['running' => false];
-    }
+    $mt = @filemtime($filePath);
+    if ($mt !== false) return (int)$mt;
+    return null;
 }
 
-echo json_encode($status);
-?>
+function pid_is_alive($pid) {
+    $pid = (int)$pid;
+    if ($pid <= 1) return false;
+
+    if (function_exists('posix_kill')) {
+        return @posix_kill($pid, 0);
+    }
+    // Can't verify without posix; assume alive if lock exists
+    return true;
+}
+
+$now = time();
+
+try {
+    $tasks = [
+        'crawler' => [
+            'label' => 'Crawler (Domains)',
+            'running_file' => $base_dir . 'crawler.running',
+            'pid_file' => $base_dir . 'crawler.lock',
+        ],
+        'geturls' => [
+            'label' => 'Get URLs',
+            'running_file' => $base_dir . 'getURLS.running',
+        ],
+        'getemails' => [
+            'label' => 'Get Emails',
+            'running_file' => $base_dir . 'crawler.getemails.running',
+            'pid_file' => $base_dir . 'crawler.lock',
+        ],
+        'addtomautic' => [
+            'label' => 'Send Emails to Mautic',
+            'running_file' => $base_dir . 'addtomautic.running',
+        ],
+    ];
+
+    $status = [
+        'ok' => true,
+        'serverTime' => date('Y-m-d H:i:s'),
+        'now' => $now,
+        'tasks' => [],
+    ];
+
+    foreach ($tasks as $key => $cfg) {
+        $runningFile = $cfg['running_file'];
+        $pidFile = isset($cfg['pid_file']) ? $cfg['pid_file'] : null;
+
+        $running = is_file($runningFile);
+
+        $pid = null;
+        if ($pidFile && is_file($pidFile)) {
+            $pidRaw = trim((string)@file_get_contents($pidFile));
+            $pid = (int)$pidRaw;
+            if ($pid <= 1) $pid = null;
+        }
+
+        $startedTs = null;
+        if ($running) {
+            $startedTs = safe_read_started_at($runningFile);
+        }
+
+        $elapsed = null;
+        if ($running && $startedTs) {
+            $elapsed = max(0, $now - $startedTs);
+        }
+
+        // If we have POSIX and PID isn't alive, mark stale lock as not running
+        if ($running && $pid !== null && function_exists('posix_kill')) {
+            if (!pid_is_alive($pid)) {
+                $running = false;
+            }
+        }
+
+        $status['tasks'][$key] = [
+            'label' => $cfg['label'],
+            'running' => $running,
+            'started_at' => $startedTs ? date('Y-m-d H:i:s', $startedTs) : null,
+            'elapsed_seconds' => $elapsed,
+            'pid' => $pid,
+            'running_file' => basename($runningFile),
+        ];
+    }
+
+    echo json_encode($status);
+    exit;
+
+} catch (Throwable $e) {
+    http_response_code(500);
+    echo json_encode([
+        'ok' => false,
+        'error' => 'status_api failed: ' . $e->getMessage(),
+    ]);
+    exit;
+}

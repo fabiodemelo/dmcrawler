@@ -104,7 +104,7 @@ include 'db.php'; // Include database connection
             <div class="card text-white bg-info mb-3">
                 <div class="card-header">Total URLs Crawled</div>
                 <div class="card-body">
-                    <h5 class="card-title"><?= number_format($totalUrlsCrawled) ?></h5>  
+                    <h5 class="card-title"><?= number_format($totalUrlsCrawled) ?></h5>
                 </div>
             </div>
         </div>
@@ -168,89 +168,121 @@ include 'db.php'; // Include database connection
             </div>
         </div>
 
-        <div class="col-md-6 mb-4">
-            <div class="card">
-                <div class="card-header">
-                    Process Status
-                </div>
-                <div class="card-body">
-                    <p class="card-text">Current status of long-running background tasks. Hover for start time.</p>
-                    <ul class="list-group" id="process-status-list">
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            Crawler (Domains)
-                            <span class="status-badge bg-secondary" id="status-crawler">Loading...</span>
-                        </li>
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            Get URLs
-                            <span class="status-badge bg-secondary" id="status-geturls">Loading...</span>
-                        </li>
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            Get Emails
-                            <span class="status-badge bg-secondary" id="status-getemails">Loading...</span>
-                        </li>
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            Send Emails to Mautic
-                            <span class="status-badge bg-secondary" id="status-addtomautic">Loading...</span>
-                        </li>
-                    </ul>
-                    <p class="mt-3 text-muted small">Status updates every 5 seconds.</p>
+            <div class="col-md-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        Process Status
+                    </div>
+                    <div class="card-body">
+                        <p class="card-text">Current status of long-running background tasks. Hover for start time.</p>
+                        <ul class="list-group" id="process-status-list">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                Crawler (Domains)
+                                <span class="status-badge bg-secondary" id="status-crawler">Loading...</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                Get URLs
+                                <span class="status-badge bg-secondary" id="status-geturls">Loading...</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                Get Emails
+                                <span class="status-badge bg-secondary" id="status-getemails">Loading...</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                Send Emails to Mautic
+                                <span class="status-badge bg-secondary" id="status-addtomautic">Loading...</span>
+                            </li>
+                        </ul>
+                        <p class="mt-3 text-muted small">Status updates every 5 seconds.</p>
+                    </div>
                 </div>
             </div>
         </div>
+
     </div>
 
-</div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function fmtElapsed(seconds) {
+            if (seconds === null || seconds === undefined) return '';
+            seconds = parseInt(seconds, 10);
+            if (isNaN(seconds) || seconds < 0) return '';
+            if (seconds < 60) return seconds + 's';
+            var m = Math.floor(seconds / 60);
+            var s = seconds % 60;
+            if (m < 60) return m + 'm ' + s + 's';
+            var h = Math.floor(m / 60);
+            m = m % 60;
+            return h + 'h ' + m + 'm';
+        }
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-<script>
-    function updateProcessStatus() {
-        fetch('status_api.php')
-            .then(response => response.json())
-            .then(data => {
-                const statusMap = {
-                    'status-crawler': 'crawler',
-                    'status-geturls': 'geturls',
-                    'status-getemails': 'getemails',
-                    'status-addtomautic': 'addtomautic'
-                };
+        function setBadge(el, task) {
+            if (!el) return;
 
-                for (const elementId in statusMap) {
-                    const scriptKey = statusMap[elementId];
-                    const statusElement = document.getElementById(elementId);
-                    if (statusElement && data[scriptKey]) {
-                        if (data[scriptKey].running) {
-                            statusElement.textContent = 'Running';
-                            statusElement.classList.remove('bg-secondary');
-                            statusElement.classList.add('bg-success'); // Green for running
-                            if (data[scriptKey].started_at) {
-                                statusElement.setAttribute('title', 'Started at: ' + data[scriptKey].started_at);
-                            }
-                        } else {
-                            statusElement.textContent = 'Idle';
-                            statusElement.classList.remove('bg-success');
-                            statusElement.classList.add('bg-secondary'); // Gray for idle
-                            statusElement.removeAttribute('title');
-                        }
+            el.classList.remove('bg-secondary', 'bg-success', 'bg-danger', 'bg-warning');
+            el.removeAttribute('title');
+
+            if (!task) {
+                el.textContent = 'Unknown';
+                el.classList.add('bg-danger');
+                return;
+            }
+
+            if (task.running) {
+                var elapsed = fmtElapsed(task.elapsed_seconds);
+                el.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Running' + (elapsed ? (' (' + elapsed + ')') : '');
+                el.classList.add('bg-success');
+
+                var tip = [];
+                if (task.started_at) tip.push('Started: ' + task.started_at);
+                if (task.pid) tip.push('PID: ' + task.pid);
+                if (task.running_file) tip.push('Lock: ' + task.running_file);
+                if (tip.length) el.setAttribute('title', tip.join(' | '));
+                return;
+            }
+
+            if (task.stale_pid) {
+                el.innerHTML = '<i class="fas fa-triangle-exclamation me-1"></i> Stale';
+                el.classList.add('bg-warning');
+                el.setAttribute('title', 'PID file exists but running marker is missing.');
+                return;
+            }
+
+            el.textContent = 'Idle';
+            el.classList.add('bg-secondary');
+        }
+
+        function updateProcessStatus() {
+            fetch('status_api.php', { cache: 'no-store' })
+                .then(function (response) { return response.json(); })
+                .then(function (data) {
+                    if (!data || data.ok !== true) throw new Error('Bad status_api response');
+
+                    var tasks = data.tasks || {};
+
+                    setBadge(document.getElementById('status-crawler'), tasks.crawler);
+                    setBadge(document.getElementById('status-geturls'), tasks.geturls);
+                    setBadge(document.getElementById('status-getemails'), tasks.getemails);
+                    setBadge(document.getElementById('status-addtomautic'), tasks.addtomautic);
+
+                    var old = document.getElementById('status-error-alert');
+                    if (old) old.remove();
+                })
+                .catch(function (error) {
+                    console.error('Error fetching process status:', error);
+                    var statusList = document.getElementById('process-status-list');
+                    if (statusList && !document.getElementById('status-error-alert')) {
+                        var errorAlert = document.createElement('div');
+                        errorAlert.id = 'status-error-alert';
+                        errorAlert.className = 'alert alert-warning mt-3';
+                        errorAlert.textContent = 'Could not fetch process statuses. Check server logs.';
+                        statusList.parentNode.insertBefore(errorAlert, statusList.nextSibling);
                     }
-                }
-            })
-            .catch(error => {
-                console.error('Error fetching process status:', error);
-                const statusList = document.getElementById('process-status-list');
-                if (statusList && !document.getElementById('status-error-alert')) {
-                    const errorAlert = document.createElement('div');
-                    errorAlert.id = 'status-error-alert';
-                    errorAlert.className = 'alert alert-warning mt-3';
-                    errorAlert.textContent = 'Could not fetch process statuses. Check server logs.';
-                    statusList.parentNode.insertBefore(errorAlert, statusList.nextSibling);
-                }
-            });
-    }
+                });
+        }
 
-    // Update status immediately on page load
-    updateProcessStatus();
-    // Update status every 5 seconds
-    setInterval(updateProcessStatus, 5000);
-</script>
-</body>
-</html>
+        updateProcessStatus();
+        setInterval(updateProcessStatus, 5000);
+    </script>
+    </body>
+    </html>
