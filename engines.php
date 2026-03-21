@@ -160,52 +160,45 @@ if ($result) {
 }
 ?>
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Manage Engines</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Engines — Demelos</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>
-        .table td, .table th { vertical-align: middle; }
-        .form-control-sm-inline {
-            width: 100%;
-        }
-        .engine-column {
-            max-width: 300px; /* Set max width for engine column */
-            word-wrap: break-word; /* Break long words */
-        }
-        .actions-col { width: 120px; }
-    </style>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+    <link rel="stylesheet" href="assets/css/app.css">
 </head>
 <body>
 <?php include 'nav.php'; ?>
 
-<div class="container mt-4">
-    <h1>Manage Engines</h1>
+<div class="container-fluid px-4">
+    <div class="page-header">
+        <h1>Search Engines</h1>
+        <p>Manage SerpAPI search engines for domain discovery.</p>
+    </div>
     <?= $message ?>
 
     <div class="card mb-4">
-        <div class="card-header">
-            Add New Engine
-        </div>
         <div class="card-body">
-            <form method="post" class="row g-3 align-items-center">
+            <h3 class="mb-3">Add New Engine</h3>
+            <form method="post" class="row g-3 align-items-end">
                 <input type="hidden" name="action" value="add">
                 <div class="col-md-8">
-                    <label for="newEngine" class="visually-hidden">New Engine Name (as per SerpAPI)</label>
+                    <label for="newEngine" class="form-label">Engine Name (SerpAPI)</label>
                     <input type="text" class="form-control" id="newEngine" name="name" placeholder="e.g., google, google_maps, bing, yahoo" required>
                 </div>
                 <div class="col-md-4">
-                    <button type="submit" class="btn btn-success w-100"><i class="fas fa-plus"></i> Add Engine</button>
+                    <button type="submit" class="btn btn-success w-100"><i class="fas fa-plus me-2"></i>Add Engine</button>
                 </div>
             </form>
         </div>
     </div>
 
-    <div class="table-responsive">
-        <table class="table table-striped table-bordered table-hover table-sm">
-            <thead class="table-success">
+    <div class="table-card">
+        <table class="table">
+            <thead>
             <tr>
                 <th><?= sort_link('id', 'ID', $orderBy, $orderDir) ?></th>
                 <th class="engine-column"><?= sort_link('name', 'Engine Name', $orderBy, $orderDir) ?></th>
@@ -243,7 +236,13 @@ if ($result) {
                 <?php endforeach; ?>
             <?php else: ?>
                 <tr>
-                    <td colspan="4" class="text-center text-muted py-4">No engines found. Add one above!</td>
+                    <td colspan="4">
+                        <div class="empty-state">
+                            <i class="fas fa-search"></i>
+                            <h4>No engines yet</h4>
+                            <p>Add a search engine above to start discovering domains.</p>
+                        </div>
+                    </td>
                 </tr>
             <?php endif; ?>
             </tbody>

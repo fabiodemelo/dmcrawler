@@ -1,241 +1,27 @@
 <?php
-// crawler.php - Crawls websites for emails with live progress and settings.
-// Requires: db.php for MySQLi connection ($conn)
-// Settings loaded from `settings` table (id=1):
-//   page_delay_min, page_delay_max, domain_delay_min, domain_delay_max, max_depth, min_pages_crawled
+// crawler.php — Phase 2: Intelligent Crawling with Scoring Pipeline
+// Requires: db.php, includes/functions.php, includes/scoring.php, includes/blacklist.php
 
 declare(strict_types=1);
 include 'db.php';
+require_once __DIR__ . '/includes/scoring.php';
+require_once __DIR__ . '/includes/blacklist.php';
 
-// --- START LOCK FILE MANAGEMENT ---
-// Determine the lock file name based on how it was invoked from the dashboard
-// Default lock file for general 'crawler' task
+// --- Lock File Management ---
 $lock_file_name = 'crawler.running';
-
-// Check if a specific mode was passed (e.g., from run_get_emails.php)
 if (isset($argv[1])) {
     $arg = explode('=', $argv[1]);
     if (count($arg) === 2 && $arg[0] === '--mode' && $arg[1] === 'email_extraction') {
-        $lock_file_name = 'crawler.getemails.running'; // Specific lock for "Get Emails" task
+        $lock_file_name = 'crawler.getemails.running';
     }
 }
 $lock_file = __DIR__ . '/' . $lock_file_name;
-
-// Create lock file at the very beginning of the script execution, storing start time
 file_put_contents($lock_file, date('Y-m-d H:i:s'));
-
-// Register a shutdown function to ensure the lock file is removed even if the script crashes
 register_shutdown_function(function() use ($lock_file) {
-    if (file_exists($lock_file)) {
-        unlink($lock_file);
-        // Optionally, log that the script finished or crashed
-        // error_log("Script finished or crashed, removed lock file: " . $lock_file);
-    }
+    if (file_exists($lock_file)) unlink($lock_file);
 });
-// --- END LOCK FILE MANAGEMENT ---
 
-// ... rest of your existing crawler.php code ...
-
-// IMPORTANT: The existing code in crawler.php might be within a main execution block or function.
-// Ensure the lock file management code above is placed right after 'include db.php;'
-// and before any core logic of the crawler starts to execute, especially anything that might 'exit' early.
-
-// For example, if your crawler.php has a main() function:
-// function main() {
-//    // ... all your crawler logic ...
-// }
-// Then make sure the lock file code is outside and before the call to main().
-// If it's just procedural code, place it near the top.
-
-// ======= Core Utilities (Must be defined first) =======
-
-// Helper to ensure DB connection is available
-if (!function_exists('ensure_db_connection')) {
-    function ensure_db_connection(): bool {
-        global $conn;
-        if ($conn instanceof mysqli && $conn->ping()) return true;
-        // Attempt to re-establish or re-include if needed (e.g., after long idle or in CLI)
-        $dbPath = __DIR__ . '/db.php';
-        if (file_exists($dbPath)) {
-            include $dbPath; // Use include, as require_once might not re-execute if already included
-        }
-        return ($conn instanceof mysqli && $conn->ping());
-    }
-}
-
-// Global setting getter (unified and robust)
-if (!function_exists('get_setting_value')) {
-    function get_setting_value($field) {
-        if (!is_string($field) || !preg_match('/^[a-zA-Z0-9_]+$/', $field)) {
-            // Log this error as get_setting_value might be used for debugging
-            if (function_exists('log_activity')) {
-                log_activity("get_setting_value: Invalid field name attempted: '{$field}'");
-            }
-            return null;
-        }
-        if (!ensure_db_connection()) {
-            if (function_exists('log_activity')) {
-                log_activity("get_setting_value: No DB connection for field '{$field}'");
-            }
-            return null;
-        }
-        global $conn;
-        // Use backticks for field names to prevent SQL reserved word issues
-        $res = $conn->query("SELECT `{$field}` AS v FROM settings WHERE id = 1");
-        if ($res && ($row = $res->fetch_assoc())) {
-            return $row['v'];
-        }
-        return null;
-    }
-}
-
-// Log activity to file and potentially stream
-if (!function_exists('log_activity')) {
-    function log_activity($message) {
-        $timestamp = date('Y-m-d H:i:s');
-        $line = "[$timestamp] " . (string)$message . "\n";
-        @file_put_contents(__DIR__ . '/crawler.log', $line, FILE_APPEND);
-        if (php_sapi_name() === 'cli') {
-            echo $line;
-        }
-        if (function_exists('stream_message')) { // Check if stream_message is defined yet
-            @stream_message((string)$message);
-        }
-        // Force flush in case this is called early
-        if (function_exists('force_flush')) {
-            force_flush();
-        }
-    }
-}
-
-// Returns the configured minimum pages threshold (cached on first call)
-if (!function_exists('get_min_pages_threshold')) {
-    function get_min_pages_threshold() {
-        static $cached = null;
-        if ($cached !== null) return $cached;
-        $cached = 0; // Default to 0 if not found or error
-        try {
-            // Use the generic get_setting_value
-            $val = get_setting_value('min_pages_crawled');
-            if ($val !== null) {
-                $intVal = (int)$val;
-                if ($intVal >= 0) $cached = $intVal;
-            }
-        } catch (Exception $e) {
-            log_activity("get_min_pages_threshold error: " . $e->getMessage());
-        }
-        return $cached;
-    }
-}
-
-// Mark a domain as crawled (idempotent) once threshold reached
-if (!function_exists('mark_domain_crawled_once')) {
-    function mark_domain_crawled_once($domain_id) {
-        static $marked = [];
-        if (isset($marked[$domain_id])) return false; // Already marked in this run
-
-        if (!ensure_db_connection()) {
-            log_activity("mark_domain_crawled_once: No DB connection for domain {$domain_id}");
-            return false;
-        }
-        global $conn;
-        $domain_id = (int)$domain_id;
-        if ($domain_id <= 0) return false;
-
-        $sql = "UPDATE `domains`
-                   SET `crawled` = 1,
-                       `date_crawled` = IFNULL(`date_crawled`, NOW())
-                 WHERE `id` = ? AND `crawled` = 0
-                 LIMIT 1";
-        $stmt = $conn->prepare($sql);
-        if ($stmt === false) {
-            log_activity("mark_domain_crawled_once: prepare failed for domain {$domain_id}: " . $conn->error);
-            return false;
-        }
-        $stmt->bind_param('i', $domain_id);
-        $ok = $stmt->execute();
-        if ($ok === false) {
-            log_activity("mark_domain_crawled_once: execute failed for domain {$domain_id}: " . $stmt->error);
-            $stmt->close();
-            return false;
-        }
-        // Note: autocommit might be off from `db.php` if it uses PDO, but $conn is mysqli here.
-        // For mysqli, queries are typically autocommitted by default unless explicitly disabled.
-        $affected = $stmt->affected_rows;
-        $stmt->close();
-
-        if ($affected > 0) {
-            $marked[$domain_id] = true; // Mark as done for this script run
-            log_activity("Domain {$domain_id} marked as crawled (min_pages_crawled reached).");
-            return true;
-        }
-        // If it was already crawled by another process or earlier in this one, update static cache
-        $res = $conn->query("SELECT `crawled` FROM `domains` WHERE `id` = {$domain_id} LIMIT 1");
-        if ($res && $row = $res->fetch_assoc()) {
-            if ((int)$row['crawled'] === 1) {
-                $marked[$domain_id] = true;
-            }
-        }
-        return false;
-    }
-}
-
-// Persist progress (urls_crawled, emails_found)
-if (!function_exists('update_domain_progress')) {
-    function update_domain_progress($domain_id, $emails_found, $urls_crawled) {
-        if (!ensure_db_connection()) {
-            log_activity("update_domain_progress: No DB connection for domain {$domain_id}");
-            return false;
-        }
-        global $conn;
-        $domain_id = (int)$domain_id;
-        $emails_found = (int)$emails_found;
-        $urls_crawled = (int)$urls_crawled;
-        if ($domain_id <= 0) return false;
-
-        $stmt = $conn->prepare("UPDATE `domains` SET `emails_found` = ?, `urls_crawled` = ? WHERE `id` = ? LIMIT 1");
-        if ($stmt === false) {
-            log_activity("update_domain_progress: prepare failed for domain {$domain_id}: " . $conn->error);
-            return false;
-        }
-        $stmt->bind_param('iii', $emails_found, $urls_crawled, $domain_id);
-        $ok = $stmt->execute();
-        if ($ok === false) {
-            log_activity("update_domain_progress: execute failed for domain {$domain_id}: " . $stmt->error);
-            $stmt->close();
-            return false;
-        }
-        // autocommit not an issue here for mysqli usually
-        $stmt->close();
-        return true;
-    }
-}
-
-// Force-flush any output buffers (crucial for live streaming)
-if (!function_exists('force_flush')) {
-    function force_flush() {
-        if (php_sapi_name() !== 'cli') {
-            echo "<!-- FLUSH " . microtime(true) . " -->\n";
-        }
-        @ob_flush(); @flush();
-    }
-}
-
-// Stream messages to CLI and/or browser console
-if (!function_exists('stream_message')) {
-    function stream_message($msg) {
-        $ts = date('Y-m-d H:i:s');
-        $line = "[$ts] " . (string)$msg;
-        if (php_sapi_name() === 'cli') {
-            echo $line . PHP_EOL;
-        } else {
-            echo "<script>appendLine(" . json_encode($line) . ");</script>\n";
-        }
-        force_flush();
-    }
-}
-
-// Start browser UI (includes HTML/CSS/JS shell for live log)
+// --- Streaming UI Functions ---
 if (!function_exists('start_streaming_ui')) {
     function start_streaming_ui() {
         @set_time_limit(0);
@@ -243,32 +29,23 @@ if (!function_exists('start_streaming_ui')) {
         @ini_set('output_buffering', '0');
         @ini_set('implicit_flush', '1');
         @ini_set('zlib.output_compression', '0');
-        while (@ob_get_level() > 0) { @ob_end_flush(); }
-        @ob_implicit_flush(true); // Fix: changed from 1 to true
-
-        if (php_sapi_name() === 'cli') {
-            force_flush(); // Ensure output is not buffered in CLI either
-            return;
-        }
+        while (@ob_get_level() > 0) @ob_end_flush();
+        @ob_implicit_flush(true);
+        if (php_sapi_name() === 'cli') { force_flush(); return; }
         header('Content-Type: text/html; charset=utf-8');
         header('Cache-Control: no-cache, no-store, must-revalidate');
-        header('Pragma: no-cache');
-        header('Expires: 0');
-        header('X-Accel-Buffering: no'); // Nginx specific
-        header('Content-Encoding: none'); // Disable gzip
-
+        header('X-Accel-Buffering: no');
+        header('Content-Encoding: none');
         echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Crawler Live</title>';
         echo '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">';
-        echo '<style>body{padding:10px}.log{height:320px;white-space:pre;overflow:auto;background:#0b1220;color:#d9f99d;border:1px solid #334155;border-radius:8px;padding:10px;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace}</style>';
+        echo '<style>body{padding:10px}.log{height:400px;white-space:pre-wrap;overflow:auto;background:#0b1220;color:#d9f99d;border:1px solid #334155;border-radius:8px;padding:10px;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace}</style>';
         echo '</head><body>';
-        echo '<div class="mb-2"><b>Live Crawler Output</b></div><div id="l" class="log"></div>';
+        echo '<div class="mb-2"><b>Crawler Live — Phase 2 Intelligence</b></div><div id="l" class="log"></div>';
         echo '<script>var L=document.getElementById("l");function appendLine(t){var b=L.scrollTop+L.clientHeight>=L.scrollHeight-5;L.textContent+=t+"\\n";if(b)L.scrollTop=L.scrollHeight;}</script>';
-        echo str_repeat(' ', 8192), "\n"; // Padding to bypass initial buffering
+        echo str_repeat(' ', 8192), "\n";
         force_flush();
     }
 }
-
-// End browser UI (append closing tags)
 if (!function_exists('end_streaming_ui')) {
     function end_streaming_ui() {
         if (php_sapi_name() === 'cli') return;
@@ -276,266 +53,346 @@ if (!function_exists('end_streaming_ui')) {
         force_flush();
     }
 }
-
-// Stream stats to CLI and/or browser HUD
 if (!function_exists('stream_stats_crawler')) {
-    function stream_stats_crawler($domain, $pages, $emails, $t0) {
+    function stream_stats_crawler($domain, $pages, $emails, $t0, $extra = []) {
         $elapsed = max(0.001, microtime(true) - (float)$t0);
         $rate = sprintf('%.2f', ($pages > 0 ? $pages / $elapsed : 0.0));
+        $rejected = $extra['rejected'] ?? 0;
+        $budget = $extra['budget'] ?? '?';
+        $quality = $extra['quality'] ?? '?';
         if (php_sapi_name() === 'cli') {
-            echo "[STATS] domain=" . (string)$domain . " | pages=" . (int)$pages . " | emails=" . (int)$emails . " | elapsed=" . (int)$elapsed . "s | rate=" . $rate . " p/s" . PHP_EOL;
+            echo "[STATS] domain={$domain} | pages={$pages}/{$budget} | emails={$emails} | rejected={$rejected} | quality={$quality} | {$rate} p/s" . PHP_EOL;
             force_flush();
             return;
         }
-        // Browser HUD update script (initializes once, then updates)
-        echo "<script>(function(d,p,e,s,r){if(!window.__hud){var c=document.createElement('div');c.id='crawlHUD';c.style.cssText='position:fixed;right:10px;top:10px;background:#0b1220;color:#d9f99d;border:1px solid #334155;border-radius:8px;padding:10px 12px;font:12px/1.3 ui-monospace,Menlo,Consolas,monospace;z-index:2147483647;box-shadow:0 2px 10px rgba(0,0,0,.4)';c.innerHTML='<div style=\"font-weight:700;margin-bottom:6px\">Crawler Live</div><div>Domain: <span id=\"h_d\">-</span></div><div>Pages: <span id=\"h_p\">0</span></div><div>Emails: <span id=\"h_e\">0</span></div><div>Elapsed: <span id=\"h_s\">0s</span></div><div>Rate: <span id=\"h_r\">0.00</span> p/s</div>';document.body.appendChild(c);window.__hud={d:document.getElementById('h_d'),p:document.getElementById('h_p'),e:document.getElementById('h_e'),s:document.getElementById('h_s'),r:document.getElementById('h_r')};}var H=window.__hud;H.d.textContent=d;H.p.textContent=String(p);H.e.textContent=String(e);H.s.textContent=(s<60? (s+'s') : (Math.floor(s/60)+'m '+(s%60)+'s'));H.r.textContent=r;})(" . json_encode((string)$domain) . "," . (int)$pages . "," . (int)$emails . "," . (int)$elapsed . "," . json_encode($rate) . ");</script>\n";
+        echo "<script>(function(d,p,e,s,r,rej,bud,q){if(!window.__hud){var c=document.createElement('div');c.id='crawlHUD';c.style.cssText='position:fixed;right:10px;top:10px;background:#0b1220;color:#d9f99d;border:1px solid #334155;border-radius:8px;padding:12px 14px;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;z-index:2147483647;box-shadow:0 2px 10px rgba(0,0,0,.4);min-width:220px';c.innerHTML='<div style=\"font-weight:700;margin-bottom:6px;color:#f5a623\">Crawler v2</div><div>Domain: <span id=\"h_d\">-</span></div><div>Pages: <span id=\"h_p\">0</span>/<span id=\"h_b\">?</span></div><div>Emails: <span id=\"h_e\">0</span></div><div>Rejected: <span id=\"h_rej\">0</span></div><div>Quality: <span id=\"h_q\">?</span></div><div>Elapsed: <span id=\"h_s\">0s</span></div><div>Rate: <span id=\"h_r\">0.00</span> p/s</div>';document.body.appendChild(c);window.__hud={d:document.getElementById('h_d'),p:document.getElementById('h_p'),e:document.getElementById('h_e'),s:document.getElementById('h_s'),r:document.getElementById('h_r'),rej:document.getElementById('h_rej'),b:document.getElementById('h_b'),q:document.getElementById('h_q')};}var H=window.__hud;H.d.textContent=d;H.p.textContent=String(p);H.e.textContent=String(e);H.s.textContent=(s<60?(s+'s'):(Math.floor(s/60)+'m '+(s%60)+'s'));H.r.textContent=r;H.rej.textContent=String(rej);H.b.textContent=String(bud);H.q.textContent=String(q);})(" . json_encode((string)$domain) . "," . (int)$pages . "," . (int)$emails . "," . (int)$elapsed . "," . json_encode($rate) . "," . (int)$rejected . "," . json_encode((string)$budget) . "," . json_encode((string)$quality) . ");</script>\n";
         force_flush();
     }
 }
-
-// cURL progress for download heartbeats
 if (!function_exists('curl_progress_echo')) {
     function curl_progress_echo($resource, $dl_total, $dl_now, $ul_total, $ul_now) {
         static $last = 0;
         $now = time();
         if ($now !== $last) {
             $kbNow = $dl_now > 0 ? round($dl_now / 1024, 1) : 0;
-            $kbTot = $dl_total > 0 ? round($dl_total / 1024, 1) : 0;
-            stream_message("... downloading {$kbNow}KB" . ($kbTot ? " of {$kbTot}KB" : ''));
+            stream_message("... downloading {$kbNow}KB");
             $last = $now;
         }
-        // Return 0 to continue transfer
         return 0;
     }
 }
 
-// Single-instance lock to prevent duplicate crawler runs
+// --- Lock Helpers ---
 if (!function_exists('acquire_lock')) {
     function acquire_lock() {
         $lockFile = __DIR__ . '/crawler.lock';
         $fh = @fopen($lockFile, 'c+');
         if (!$fh) return false;
-        // LOCK_EX (exclusive lock) | LOCK_NB (non-blocking)
-        if (!@flock($fh, LOCK_EX | LOCK_NB)) {
-            @fclose($fh); // Close if cannot acquire
-            return false;
-        }
-        ftruncate($fh, 0); // Clear file content
-        fwrite($fh, (string)getmypid()); // Write PID
-        return $fh; // Keep handle open to hold the lock
+        if (!@flock($fh, LOCK_EX | LOCK_NB)) { @fclose($fh); return false; }
+        ftruncate($fh, 0);
+        fwrite($fh, (string)getmypid());
+        return $fh;
     }
 }
 if (!function_exists('release_lock')) {
     function release_lock($fh) {
-        if (is_resource($fh)) {
-            @flock($fh, LOCK_UN); // Release the lock
-            @fclose($fh);
-            // Optionally unlink($lockFile) if you want to remove the file after,
-            // but keeping it helps detect orphaned locks from crashed scripts.
-        }
+        if (is_resource($fh)) { @flock($fh, LOCK_UN); @fclose($fh); }
     }
 }
 
-// ======= New Email Validation Helpers =======
-if (!function_exists('is_valid_email_format')) {
-    function is_valid_email_format($email) {
-        return filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
-    }
-}
-if (!function_exists('has_bad_extension')) {
-    function has_bad_extension($email) {
-        // Flag common file extensions that indicate a bad scrape (e.g., image names mistaken for emails)
-        return preg_match('/\.(jpg|jpeg|png|gif|pdf|zip|mp4|avi|mov)\b/i', $email) === 1;
-    }
-}
-// ======= END New Email Validation Helpers =======
-
-// ======= New Email Validation Helpers =======
-if (!function_exists('is_valid_email_format')) {
-    function is_valid_email_format($email) {
-        return filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
-    }
-}
-if (!function_exists('has_bad_extension')) {
-    function has_bad_extension($email) {
-        // Flag common file extensions that indicate a bad scrape (e.g., image names mistaken for emails)
-        return preg_match('/\.(jpg|jpeg|png|gif|pdf|zip|mp4|avi|mov)\b/i', $email) === 1;
-    }
-}
-if (!function_exists('has_allowed_extension')) {
-    function has_allowed_extension($email) {
-        $allowed_extensions = [
-            '.com', '.net', '.org', '.co', '.io', '.us', '.gov', '.ca', '.edu', '.mil', '.ai', '.dev', '.app','.me','.biz','.app', '.tech'
-        ];
-        $email_parts = explode('@', $email);
-        if (count($email_parts) < 2) {
-            return false; // Not a valid email structure
-        }
-        $domain = $email_parts[1];
-        foreach ($allowed_extensions as $ext) {
-            if (str_ends_with($domain, $ext)) {
-                return true;
-            }
-        }
-        return false;
-    }
-}
-// ======= END New Email Validation Helpers =======
-
-// ======= URL Normalization =======
+// --- URL Normalization ---
 if (!function_exists('normalize_url')) {
     function normalize_url($base, $link) {
-        // Return absolute URL as is
-        if (preg_match('/^https?:\/\//i', $link)) {
-            return $link;
-        }
-        // Handle root-relative links
+        if (preg_match('/^https?:\/\//i', $link)) return $link;
         if (substr($link, 0, 1) == '/') {
             $parsed_base = parse_url($base);
             return ($parsed_base['scheme'] ?? 'http') . '://' . ($parsed_base['host'] ?? '') . $link;
         }
-        // Handle path-relative links
         $parsed_base = parse_url($base);
         $scheme = $parsed_base['scheme'] ?? 'http';
         $host = $parsed_base['host'] ?? '';
         $path = dirname($parsed_base['path'] ?? '/');
-        // Clean up "./", "../", etc.
-        $path_parts = explode('/', $path);
-        $link_parts = explode('/', $link);
-        $new_path_parts = [];
-        foreach ($path_parts as $part) {
-            if ($part === '' || $part === '.') continue;
-            $new_path_parts[] = $part;
+        $path_parts = array_filter(explode('/', $path), fn($p) => $p !== '' && $p !== '.');
+        foreach (explode('/', $link) as $part) {
+            if ($part === '..') array_pop($path_parts);
+            elseif ($part !== '' && $part !== '.') $path_parts[] = $part;
         }
-        foreach ($link_parts as $part) {
-            if ($part === '..') {
-                array_pop($new_path_parts);
-            } elseif ($part !== '' && $part !== '.') {
-                $new_path_parts[] = $part;
-            }
-        }
-        $clean_path = '/' . implode('/', $new_path_parts);
-        return $scheme . '://' . $host . $clean_path;
+        return $scheme . '://' . $host . '/' . implode('/', $path_parts);
     }
 }
 
-// ======= Main Crawler Logic =======
+// --- cURL Fetch Helper ---
+function fetch_page(string $url): array {
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $url,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 5,
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        CURLOPT_REFERER => 'https://www.google.com/',
+        CURLOPT_ENCODING => '',
+        CURLOPT_CONNECTTIMEOUT => 8,
+        CURLOPT_TIMEOUT => 20,
+        CURLOPT_LOW_SPEED_LIMIT => 300,
+        CURLOPT_LOW_SPEED_TIME => 8,
+        CURLOPT_NOSIGNAL => true,
+        CURLOPT_NOPROGRESS => false,
+        CURLOPT_PROGRESSFUNCTION => 'curl_progress_echo',
+    ]);
+    $html = curl_exec($ch);
+    $err = curl_error($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    return ['html' => $html, 'error' => $err, 'http_code' => $code];
+}
 
-function crawl_page($url, $domain, &$visited, &$email_count, $domain_id, $page_delay, $depth, $max_depth) {
-    if ($depth > $max_depth) {
-        log_activity("Max depth reached at $url");
-        stream_message("Max depth reached at $url");
-        if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, count($visited), $email_count, $GLOBALS['__crawl_t0']);
+// --- Log a rejection to DB ---
+function log_rejection(int $domain_id, string $email, ?string $page_url, string $reason, string $category): void {
+    global $conn;
+    // Check if table exists (Phase 2 migration may not have run yet)
+    static $tableChecked = null;
+    if ($tableChecked === null) {
+        $tableChecked = (bool)$conn->query("SELECT 1 FROM email_rejections LIMIT 0");
+        if (!$tableChecked) return; // Table doesn't exist yet
+    }
+    if (!$tableChecked) return;
+
+    $stmt = $conn->prepare("INSERT INTO email_rejections (domain_id, email, page_url, rejection_reason, rejection_category) VALUES (?, ?, ?, ?, ?)");
+    if (!$stmt) return;
+    $stmt->bind_param('issss', $domain_id, $email, $page_url, $reason, $category);
+    $stmt->execute();
+    $stmt->close();
+}
+
+// --- Record crawl_pages entry ---
+function record_crawl_page(int $domain_id, string $url, ?int $quality_score, int $http_status, int $extracted, int $accepted, int $rejected): void {
+    global $conn;
+    static $tableChecked = null;
+    if ($tableChecked === null) {
+        $tableChecked = (bool)$conn->query("SELECT 1 FROM crawl_pages LIMIT 0");
+        if (!$tableChecked) return;
+    }
+    if (!$tableChecked) return;
+
+    $stmt = $conn->prepare("INSERT INTO crawl_pages (domain_id, url, quality_score, http_status, emails_extracted, emails_accepted, emails_rejected) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    if (!$stmt) return;
+    $stmt->bind_param('isiiiii', $domain_id, $url, $quality_score, $http_status, $extracted, $accepted, $rejected);
+    $stmt->execute();
+    $stmt->close();
+}
+
+// ======= 8-Stage Pipeline: crawl_page =======
+
+function crawl_page(string $url, string $domain, array &$visited, int &$email_count, int $domain_id, array $page_delay, int $depth, int $max_depth, array &$crawl_state): void {
+
+    // Check stop conditions
+    if ($crawl_state['stopped']) return;
+    if ($depth > $max_depth) return;
+    if (count($visited) >= $crawl_state['budget']) {
+        $crawl_state['stopped'] = true;
+        $crawl_state['stop_reason'] = 'Budget exhausted (' . $crawl_state['budget'] . ' pages)';
+        log_activity($crawl_state['stop_reason']);
+        return;
+    }
+    if ($crawl_state['consecutive_low_pages'] >= $crawl_state['max_consecutive_low']) {
+        $crawl_state['stopped'] = true;
+        $crawl_state['stop_reason'] = 'Too many consecutive low-quality pages (' . $crawl_state['consecutive_low_pages'] . ')';
+        log_activity($crawl_state['stop_reason']);
+        return;
+    }
+    $totalExtracted = $crawl_state['total_extracted'];
+    if ($totalExtracted >= 5 && $crawl_state['total_rejected'] / $totalExtracted > $crawl_state['max_fake_ratio']) {
+        $crawl_state['stopped'] = true;
+        $crawl_state['stop_reason'] = 'High fake email ratio (' . round($crawl_state['total_rejected'] / $totalExtracted * 100) . '%)';
+        log_activity($crawl_state['stop_reason']);
         return;
     }
 
-    $url = strtok($url, '#'); // Remove fragment identifiers
+    // === STAGE 1: Pre-filter ===
+    $url = strtok($url, '#');
     if (isset($visited[$url])) return;
-    $visited[$url] = true;
+    // Skip non-HTML resources
+    if (preg_match('/\.(jpg|jpeg|png|gif|pdf|zip|css|js|mp4|avi|mov|svg|woff|woff2|ttf|eot|ico)(\?.*)?$/i', $url)) return;
+    if (stripos($url, 'cdn-cgi') !== false || stripos($url, 'mailto:') === 0) return;
 
+    $visited[$url] = true;
     $pagesCrawled = count($visited);
+
+    // Check min pages threshold
     $minPages = get_min_pages_threshold();
-    $thresholdReached = ($minPages > 0 && $pagesCrawled >= $minPages);
-    if ($thresholdReached) {
+    if ($minPages > 0 && $pagesCrawled >= $minPages) {
         mark_domain_crawled_once($domain_id);
     }
 
-    log_activity("Visiting page: $url (Depth: $depth)");
-    stream_message("Visiting page: $url (Depth: $depth) | Pages crawled so far: {$pagesCrawled}");
-    if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, $pagesCrawled, $email_count, $GLOBALS['__crawl_t0']);
+    log_activity("Visiting: $url (Depth: $depth, Page: $pagesCrawled/{$crawl_state['budget']})");
+    stream_stats_crawler($domain, $pagesCrawled, $email_count, $GLOBALS['__crawl_t0'], [
+        'rejected' => $crawl_state['total_rejected'],
+        'budget' => $crawl_state['budget'],
+        'quality' => $crawl_state['domain_quality'],
+    ]);
 
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36');
-    curl_setopt($ch, CURLOPT_REFERER, 'https://www.google.com/');
-    curl_setopt($ch, CURLOPT_ENCODING, '');
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 20);
-    curl_setopt($ch, CURLOPT_LOW_SPEED_LIMIT, 300);
-    curl_setopt($ch, CURLOPT_LOW_SPEED_TIME, 8);
-    curl_setopt($ch, CURLOPT_NOSIGNAL, true);
-    curl_setopt($ch, CURLOPT_NOPROGRESS, false);
-    curl_setopt($ch, CURLOPT_PROGRESSFUNCTION, 'curl_progress_echo');
+    // === STAGE 2: Page scan (fetch + score) ===
+    $result = fetch_page($url);
 
-    $html = curl_exec($ch);
-    $curl_err = curl_error($ch);
-    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($html === false) {
-        log_activity("Error fetching page: $url (cURL: $curl_err)");
-        stream_message("Error fetching page: $url");
-        update_domain_progress($domain_id, $email_count, count($visited));
-        if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, count($visited), $email_count, $GLOBALS['__crawl_t0']);
-        return;
-    }
-    if ($http_code >= 400) {
-        log_activity("HTTP $http_code at $url");
-        stream_message("HTTP $http_code at $url");
-        update_domain_progress($domain_id, $email_count, count($visited));
-        if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, count($visited), $email_count, $GLOBALS['__crawl_t0']);
+    if ($result['html'] === false || $result['http_code'] >= 400) {
+        log_activity("Failed: $url (HTTP {$result['http_code']}, err: {$result['error']})");
+        record_crawl_page($domain_id, $url, null, $result['http_code'], 0, 0, 0);
+        update_domain_progress($domain_id, $email_count, $pagesCrawled);
         return;
     }
 
+    $html = $result['html'];
     $decoded_html = html_entity_decode($html);
 
-    preg_match_all('/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/', $decoded_html, $matches);
+    // Score page quality
+    $pageScore = score_page_quality($html, $url, $domain);
+    $pageQuality = $pageScore['score'];
+    $pageSignals = implode(', ', $pageScore['signals']);
+
+    stream_message("Page quality: {$pageQuality}/100 [{$pageSignals}]");
+
+    // === STAGE 3: Early decision ===
+    if ($pageQuality < $crawl_state['page_quality_threshold']) {
+        log_activity("Skipping low-quality page ({$pageQuality}/100): $url");
+        stream_message("SKIP: Low quality page ({$pageQuality}/100)");
+        $crawl_state['consecutive_low_pages']++;
+        record_crawl_page($domain_id, $url, $pageQuality, $result['http_code'], 0, 0, 0);
+        update_domain_progress($domain_id, $email_count, $pagesCrawled);
+        // Still follow links from low-quality pages (they might link to good pages)
+        goto follow_links;
+    }
+
+    // Reset consecutive low pages counter on a good page
+    $crawl_state['consecutive_low_pages'] = 0;
+
+    // === STAGE 4: Extraction ===
+    preg_match_all('/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/', $decoded_html, $matches);
+    $raw_emails = array_unique($matches[0]);
+
+    $page_extracted = 0;
+    $page_accepted = 0;
+    $page_rejected = 0;
+
     global $conn;
-    $emails = array_unique($matches[0]);
-    foreach ($emails as $email) {
-        // Basic cleanup: remove leading/trailing whitespace and ensure lowercase for canonical form
-        $email = trim(strtolower($email));
+    foreach ($raw_emails as $raw_email) {
+        $email = trim(strtolower($raw_email));
+        // Remove leading/trailing dots and spaces
+        $email = trim($email, '. ');
+        // Skip obviously bad
+        if (strlen($email) < 5 || strlen($email) > 60) continue;
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) continue;
 
-        // Validate email format and check for bad extensions before processing
-        if (!is_valid_email_format($email) || has_bad_extension($email)) {
-            log_activity("Skipping invalid or malformed email: {$email} on {$url}");
-            continue; // Skip to the next email if invalid
-        }
+        $page_extracted++;
+        $crawl_state['total_extracted']++;
 
-        $email = $conn->real_escape_string($email);
-        $check_res = $conn->query("SELECT id FROM emails WHERE email = '$email' AND domain_id = $domain_id");
-        if ($check_res->num_rows == 0) {
-            $conn->query("INSERT INTO emails (domain_id, name, email) VALUES ($domain_id, '', '$email')");
-            log_activity("Found email: $email on $url");
-            stream_message("Found email: $email on $url");
-            $email_count++;
-            if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, count($visited), $email_count, $GLOBALS['__crawl_t0']);
-        }
-    }
+        // === STAGE 5: Validation ===
 
-    update_domain_progress($domain_id, $email_count, count($visited));
-    if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, count($visited), $email_count, $GLOBALS['__crawl_t0']);
-
-    preg_match_all('/<a\s+(?:[^>]*?\s+)?href=["\']([^"\']+)["\']/i', $html, $links);
-    $totalLinks = isset($links[1]) ? count($links[1]) : 0;
-    stream_message("Discovered {$totalLinks} links on: $url");
-    force_flush();
-
-    $sleepFor = rand($page_delay[0], $page_delay[1]);
-    if ($sleepFor > 0) {
-        $step = max(1, min(2, $sleepFor));
-        for ($left = $sleepFor; $left > 0; $left -= $step) {
-            $show = max(0, $left - $step);
-            stream_message("Waiting ~{$show}s before following links...");
-            if (isset($GLOBALS['__crawl_t0'])) stream_stats_crawler($domain, count($visited), $email_count, $GLOBALS['__crawl_t0']);
-            force_flush();
-            sleep($step);
-        }
-    }
-
-    foreach ($links[1] as $link) {
-        if (stripos($link, 'cdn-cgi') !== false || stripos($link, 'mailto:') === 0 || preg_match('/\.(jpg|jpeg|png|gif|pdf|zip|css|js)$/i', $link)) {
+        // 5a. Fake email detection
+        $fakeResult = detect_fake_email($email);
+        if ($fakeResult['is_fake']) {
+            log_activity("REJECT (fake): $email — {$fakeResult['reason']}");
+            log_rejection($domain_id, $email, $url, $fakeResult['reason'], $fakeResult['category']);
+            $page_rejected++;
+            $crawl_state['total_rejected']++;
             continue;
         }
+
+        // 5b. TLD check
+        if (!is_allowed_email_tld($email)) {
+            log_activity("REJECT (TLD): $email");
+            log_rejection($domain_id, $email, $url, 'Unallowed TLD', 'bad_tld');
+            $page_rejected++;
+            $crawl_state['total_rejected']++;
+            continue;
+        }
+
+        // 5c. Confidence scoring
+        $conf = score_email_confidence($email, $html, $domain, $pageQuality);
+
+        if ($conf['score'] < $crawl_state['email_confidence_threshold']) {
+            log_activity("REJECT (low confidence {$conf['score']}): $email — " . implode(', ', $conf['reasons']));
+            log_rejection($domain_id, $email, $url, "Low confidence: {$conf['score']}", 'no_business_relevance');
+            $page_rejected++;
+            $crawl_state['total_rejected']++;
+            continue;
+        }
+
+        // 5d. Duplicate check (global — across all domains)
+        $escaped_email = $conn->real_escape_string($email);
+        $dup_check = $conn->query("SELECT id FROM emails WHERE email = '{$escaped_email}' LIMIT 1");
+        if ($dup_check && $dup_check->num_rows > 0) {
+            log_rejection($domain_id, $email, $url, 'Duplicate email (global)', 'duplicate');
+            $page_rejected++;
+            $crawl_state['total_rejected']++;
+            continue;
+        }
+
+        // === STAGE 6 & 7: Conditional API / AI (reserved for future) ===
+        // Currently pass-through
+
+        // === STAGE 8: Store ===
+        $stmt = $conn->prepare("INSERT INTO emails (domain_id, name, email, confidence_score, confidence_tier, page_url, page_quality_score) VALUES (?, '', ?, ?, ?, ?, ?)");
+        if ($stmt) {
+            $confScore = $conf['score'];
+            $confTier = $conf['tier'];
+            $stmt->bind_param('issisi', $domain_id, $email, $confScore, $confTier, $url, $pageQuality);
+            if ($stmt->execute()) {
+                $email_count++;
+                $page_accepted++;
+                log_activity("ACCEPT ({$conf['tier']}, {$conf['score']}): $email");
+                stream_message("Email: $email [confidence: {$conf['score']}, tier: {$conf['tier']}]");
+            } else {
+                // Might be a duplicate key error if unique constraint fires
+                log_activity("Insert failed for $email: " . $stmt->error);
+            }
+            $stmt->close();
+        }
+    }
+
+    // Record page stats
+    record_crawl_page($domain_id, $url, $pageQuality, $result['http_code'], $page_extracted, $page_accepted, $page_rejected);
+    update_domain_progress($domain_id, $email_count, $pagesCrawled);
+
+    stream_message("Page result: {$page_extracted} extracted, {$page_accepted} accepted, {$page_rejected} rejected");
+    stream_stats_crawler($domain, $pagesCrawled, $email_count, $GLOBALS['__crawl_t0'], [
+        'rejected' => $crawl_state['total_rejected'],
+        'budget' => $crawl_state['budget'],
+        'quality' => $crawl_state['domain_quality'],
+    ]);
+
+    follow_links:
+
+    // Extract and follow links
+    preg_match_all('/<a\s+(?:[^>]*?\s+)?href=["\']([^"\']+)["\']/i', $html, $links);
+
+    // Prioritize contact/about pages
+    $sorted_links = [];
+    $contact_links = [];
+    $other_links = [];
+    foreach (($links[1] ?? []) as $link) {
+        if (preg_match('/(contact|about|team|staff|people|leadership)/i', $link)) {
+            $contact_links[] = $link;
+        } else {
+            $other_links[] = $link;
+        }
+    }
+    $sorted_links = array_merge($contact_links, $other_links);
+
+    // Page delay
+    $sleepFor = rand($page_delay[0], $page_delay[1]);
+    if ($sleepFor > 0) sleep($sleepFor);
+
+    foreach ($sorted_links as $link) {
+        if ($crawl_state['stopped']) return;
+        if (preg_match('/\.(jpg|jpeg|png|gif|pdf|zip|css|js|mp4|svg|woff|ico)(\?.*)?$/i', $link)) continue;
+        if (stripos($link, 'cdn-cgi') !== false || stripos($link, 'mailto:') === 0) continue;
 
         $absolute_link = normalize_url($url, $link);
         $parsed = parse_url($absolute_link);
         if (isset($parsed['host']) && str_replace('www.', '', $parsed['host']) !== str_replace('www.', '', $domain)) continue;
 
-        crawl_page($absolute_link, $domain, $visited, $email_count, $domain_id, $page_delay, 0, $max_depth);
+        crawl_page($absolute_link, $domain, $visited, $email_count, $domain_id, $page_delay, $depth + 1, $max_depth, $crawl_state);
     }
 }
 
@@ -549,149 +406,253 @@ if ($__lock === false) {
     exit(1);
 }
 
-// Load settings for the crawler
+// Load settings
 $page_delay = [
-    (int) (get_setting_value('page_delay_min') ?? 1),
-    (int) (get_setting_value('page_delay_max') ?? 3)
+    max(0, (int)(get_setting_value('page_delay_min') ?? 1)),
+    max(0, (int)(get_setting_value('page_delay_max') ?? 3)),
 ];
-if ($page_delay[0] < 0) $page_delay[0] = 0;
 if ($page_delay[1] < $page_delay[0]) $page_delay[1] = $page_delay[0];
 
 $domain_delay = [
-    (int) (get_setting_value('domain_delay_min') ?? 1), // minutes
-    (int) (get_setting_value('domain_delay_max') ?? 2)
+    max(0, (int)(get_setting_value('domain_delay_min') ?? 1)),
+    max(0, (int)(get_setting_value('domain_delay_max') ?? 2)),
 ];
-if ($domain_delay[0] < 0) $domain_delay[0] = 0;
 if ($domain_delay[1] < $domain_delay[0]) $domain_delay[1] = $domain_delay[0];
 
-$max_depth = (int) (get_setting_value('max_depth') ?? 20);
-if ($max_depth < 0) $max_depth = 0;
+$max_depth = max(0, (int)(get_setting_value('max_depth') ?? 20));
+$domain_quality_enabled = (int)(get_setting_value('domain_quality_enabled') ?? 1);
+$page_quality_threshold = (int)(get_setting_value('page_quality_threshold') ?? 30);
+$email_confidence_threshold = (int)(get_setting_value('email_confidence_threshold') ?? 40);
+$max_fake_ratio = (float)(get_setting_value('max_fake_ratio') ?? 0.60);
+$max_consecutive_low = (int)(get_setting_value('max_consecutive_low_pages') ?? 3);
 
-// New email notification toggles for crawler
-$EMAIL_TO = get_setting_value('email_to') ?? 'fabio@demelos.com';
-$EMAIL_FROM = get_setting_value('email_from') ?? 'no-reply@demelos.com';
+$EMAIL_TO = get_setting_value('email_to') ?? '';
+$EMAIL_FROM = get_setting_value('email_from') ?? '';
 $EMAIL_SUBJ_PREFIX = get_setting_value('email_subj_prefix') ?? 'Crawler Report';
 $ENABLE_EMAIL_CRAWLER_SUCCESS = (int)(get_setting_value('enable_email_crawler_success') ?? 1);
 $ENABLE_EMAIL_CRAWLER_ERROR = (int)(get_setting_value('enable_email_crawler_error') ?? 1);
 
-$crawler_errors = []; // Collect errors during this run
+$crawler_errors = [];
 
 if (!ensure_db_connection()) {
-    $error_msg = "FATAL: Could not establish database connection. Exiting.";
-    stream_message($error_msg);
-    $crawler_errors[] = $error_msg;
+    stream_message("FATAL: No database connection. Exiting.");
     release_lock($__lock);
     end_streaming_ui();
-    // If you want to send an email on this fatal error:
-    // if ($ENABLE_EMAIL_CRAWLER_ERROR === 1 && !empty($EMAIL_TO)) { /* mail() logic */ }
+    exit(1);
+}
+
+// Select next domain (skip blacklisted, prioritize by quality + priority)
+$domain_query = "SELECT * FROM domains WHERE crawled = 0 AND donot = 0";
+// Check if blacklisted column exists (Phase 2 migration may not have run)
+$has_blacklisted = (bool)$conn->query("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'domains' AND COLUMN_NAME = 'blacklisted'");
+if ($has_blacklisted) {
+    $domain_query .= " AND (blacklisted = 0 OR blacklisted IS NULL)";
+    $domain_query .= " ORDER BY priority DESC, COALESCE(quality_score, 50) DESC, id ASC LIMIT 1";
+} else {
+    $domain_query .= " ORDER BY priority DESC, id ASC LIMIT 1";
+}
+
+$res = $conn->query($domain_query);
+if ($res === false) {
+    stream_message("DB Error: " . $conn->error);
+    release_lock($__lock);
+    end_streaming_ui();
     exit(1);
 }
 
 $domains_processed_count = 0;
 $total_emails_found_in_run = 0;
 
-$res = $conn->query("SELECT * FROM domains WHERE crawled = 0 AND donot = 0 ORDER BY priority DESC, id ASC LIMIT 1");
-if ($res === false) {
-    $error_msg = "DB Error fetching domain: " . $conn->error;
-    stream_message($error_msg);
-    $crawler_errors[] = $error_msg;
-    release_lock($__lock);
-    end_streaming_ui();
-    // if ($ENABLE_EMAIL_CRAWLER_ERROR === 1 && !empty($EMAIL_TO)) { /* mail() logic */ }
-    exit(1);
-}
-
 if ($row = $res->fetch_assoc()) {
     $domains_processed_count++;
-    $domain_id = $row['id'];
+    $domain_id = (int)$row['id'];
     $domain_to_crawl = $row['domain'];
-    // Ensure starting URL is absolute with scheme
     $start_url = preg_match('/^https?:\/\//i', $domain_to_crawl) ? $domain_to_crawl : "https://$domain_to_crawl";
     $host_domain = parse_url($start_url, PHP_URL_HOST);
 
-    $GLOBALS['__crawl_t0'] = microtime(true); // Global start time for HUD
+    $GLOBALS['__crawl_t0'] = microtime(true);
 
-    log_activity("START Crawl domain: $host_domain");
+    log_activity("=== START Crawl: $host_domain ===");
     stream_message("=== START Crawl: $host_domain ===");
-    stream_stats_crawler($host_domain, 0, 0, $GLOBALS['__crawl_t0']); // Initialize HUD
+
+    // --- Domain Quality Assessment ---
+    $domain_budget = $max_depth; // default
+    $domain_quality_tier = 'medium';
+    $domain_quality_score = 50;
+
+    if ($domain_quality_enabled) {
+        stream_message("Assessing domain quality...");
+        $homepageResult = fetch_page($start_url);
+
+        if ($homepageResult['html'] !== false && $homepageResult['http_code'] < 400) {
+            $dq = score_domain_quality($host_domain, $homepageResult['html']);
+            $domain_quality_score = $dq['score'];
+            $domain_quality_tier = $dq['tier'];
+            $domain_budget = $dq['budget'];
+
+            stream_message("Domain quality: {$domain_quality_score}/100 ({$domain_quality_tier}) — budget: {$domain_budget} pages");
+            log_activity("Domain quality: {$domain_quality_score}/100 ({$domain_quality_tier}), budget: {$domain_budget}, signals: " . implode(', ', $dq['signals']));
+
+            // Update domain record with quality data
+            if ($has_blacklisted) {
+                $stmt = $conn->prepare("UPDATE domains SET quality_score = ?, quality_tier = ?, max_pages_budget = ? WHERE id = ?");
+                if ($stmt) {
+                    $stmt->bind_param('isii', $domain_quality_score, $domain_quality_tier, $domain_budget, $domain_id);
+                    $stmt->execute();
+                    $stmt->close();
+                }
+            }
+
+            // Skip spam domains entirely
+            if ($domain_quality_tier === 'spam') {
+                stream_message("SPAM domain detected — skipping entirely.");
+                log_activity("Domain {$host_domain} classified as spam, skipping.");
+                $stmt = $conn->prepare("UPDATE domains SET crawled = 1, date_crawled = NOW(), emails_found = 0, urls_crawled = 0 WHERE id = ?");
+                if ($stmt) { $stmt->bind_param('i', $domain_id); $stmt->execute(); $stmt->close(); }
+                if ($has_blacklisted) {
+                    blacklist_domain($domain_id, 'Spam domain (quality score: ' . $domain_quality_score . ')');
+                }
+                release_lock($__lock);
+                end_streaming_ui();
+                exit(0);
+            }
+        } else {
+            stream_message("Could not fetch homepage — using default budget.");
+            $domain_budget = 2; // conservative for unreachable domains
+        }
+    }
+
+    // Initialize crawl state for stop conditions
+    $crawl_state = [
+        'budget' => max(1, $domain_budget),
+        'domain_quality' => $domain_quality_tier,
+        'page_quality_threshold' => $page_quality_threshold,
+        'email_confidence_threshold' => $email_confidence_threshold,
+        'max_fake_ratio' => $max_fake_ratio,
+        'max_consecutive_low' => $max_consecutive_low,
+        'consecutive_low_pages' => 0,
+        'total_extracted' => 0,
+        'total_rejected' => 0,
+        'stopped' => false,
+        'stop_reason' => null,
+    ];
+
+    // Start crawl metrics
+    $metrics_id = null;
+    $has_metrics = (bool)$conn->query("SELECT 1 FROM crawl_metrics LIMIT 0");
+    if ($has_metrics) {
+        $stmt = $conn->prepare("INSERT INTO crawl_metrics (domain_id) VALUES (?)");
+        if ($stmt) {
+            $stmt->bind_param('i', $domain_id);
+            $stmt->execute();
+            $metrics_id = $stmt->insert_id;
+            $stmt->close();
+        }
+    }
+
+    stream_stats_crawler($host_domain, 0, 0, $GLOBALS['__crawl_t0'], [
+        'rejected' => 0,
+        'budget' => $crawl_state['budget'],
+        'quality' => $domain_quality_tier,
+    ]);
 
     $visited = [];
     $email_count = 0;
-    crawl_page($start_url, $host_domain, $visited, $email_count, $domain_id, $page_delay, 0, $max_depth);
+    crawl_page($start_url, $host_domain, $visited, $email_count, $domain_id, $page_delay, 0, $max_depth, $crawl_state);
 
     $urls_crawled_count = count($visited);
     $total_emails_found_in_run += $email_count;
 
-    // Update domain status in DB
-    $update_stmt = $conn->prepare("UPDATE domains SET crawled = 1, date_crawled = NOW(), emails_found = ?, urls_crawled = ? WHERE id = ?");
-    if ($update_stmt) {
-        $update_stmt->bind_param('iii', $email_count, $urls_crawled_count, $domain_id);
-        if (!$update_stmt->execute()) {
-            $error_msg = "DB Error updating domain {$domain_id} progress: " . $update_stmt->error;
-            log_activity($error_msg);
-            $crawler_errors[] = $error_msg;
-        }
-        $update_stmt->close();
-    } else {
-        $error_msg = "DB Error preparing update for domain {$domain_id}: " . $conn->error;
-        log_activity($error_msg);
-        $crawler_errors[] = $error_msg;
+    // Update domain as crawled
+    $stmt = $conn->prepare("UPDATE domains SET crawled = 1, date_crawled = NOW(), emails_found = ?, urls_crawled = ? WHERE id = ?");
+    if ($stmt) {
+        $stmt->bind_param('iii', $email_count, $urls_crawled_count, $domain_id);
+        $stmt->execute();
+        $stmt->close();
     }
 
+    // Update domain scoring stats
+    if ($has_blacklisted) {
+        $stmt = $conn->prepare("UPDATE domains SET total_valid_emails = ?, total_rejected_emails = ? WHERE id = ?");
+        if ($stmt) {
+            $rejected = $crawl_state['total_rejected'];
+            $stmt->bind_param('iii', $email_count, $rejected, $domain_id);
+            $stmt->execute();
+            $stmt->close();
+        }
 
-    log_activity("END Crawl domain: $host_domain. Found $email_count emails and crawled $urls_crawled_count URLs.");
-    stream_message("=== END Crawl: $host_domain | Emails: $email_count | Pages: $urls_crawled_count ===");
-    stream_stats_crawler($host_domain, $urls_crawled_count, $email_count, $GLOBALS['__crawl_t0']); // Final HUD update
+        // Auto-blacklist: 0 valid emails + low quality
+        if ($email_count === 0 && $domain_quality_score < 20) {
+            blacklist_domain($domain_id, 'Zero valid emails, low quality (' . $domain_quality_score . ')');
+        }
+    }
 
-    // Delay before potentially starting another domain (in minutes, converted to seconds then microseconds for usleep)
+    // Finalize crawl metrics
+    if ($has_metrics && $metrics_id) {
+        $elapsed = (int)(microtime(true) - $GLOBALS['__crawl_t0']);
+        $pagesPerEmail = $email_count > 0 ? round($urls_crawled_count / $email_count, 2) : null;
+        $stopReason = $crawl_state['stop_reason'] ?? 'completed';
+        $rejected = $crawl_state['total_rejected'];
+        $stmt = $conn->prepare("UPDATE crawl_metrics SET run_ended_at = NOW(), pages_crawled = ?, valid_emails = ?, rejected_emails = ?, pages_per_valid_email = ?, total_time_seconds = ?, stop_reason = ? WHERE id = ?");
+        if ($stmt) {
+            $stmt->bind_param('iiidisi', $urls_crawled_count, $email_count, $rejected, $pagesPerEmail, $elapsed, $stopReason, $metrics_id);
+            $stmt->execute();
+            $stmt->close();
+        }
+    }
+
+    $stop_info = $crawl_state['stop_reason'] ? " (Stopped: {$crawl_state['stop_reason']})" : '';
+    log_activity("=== END Crawl: $host_domain | Emails: $email_count | Rejected: {$crawl_state['total_rejected']} | Pages: $urls_crawled_count{$stop_info} ===");
+    stream_message("=== END Crawl: $host_domain | Emails: $email_count | Rejected: {$crawl_state['total_rejected']} | Pages: $urls_crawled_count{$stop_info} ===");
+    stream_stats_crawler($host_domain, $urls_crawled_count, $email_count, $GLOBALS['__crawl_t0'], [
+        'rejected' => $crawl_state['total_rejected'],
+        'budget' => $crawl_state['budget'],
+        'quality' => $domain_quality_tier,
+    ]);
+
+    // Domain delay
     $domainSleepSeconds = rand($domain_delay[0] * 60, $domain_delay[1] * 60);
     if ($domainSleepSeconds > 0) {
-        stream_message("Waiting for " . $domainSleepSeconds . "s before next domain.");
+        stream_message("Waiting {$domainSleepSeconds}s before next domain.");
         sleep($domainSleepSeconds);
     }
-
 } else {
     stream_message("No domains found for crawling. Exiting.");
 }
 
-release_lock($__lock); // Release lock when done
-end_streaming_ui(); // Close browser streaming UI
+release_lock($__lock);
+end_streaming_ui();
 
-
-// --- Send final summary email for crawler.php ---
-// This block should be at the very end of your script, after all processing is done.
-$summary_subject_suffix = (empty($crawler_errors) ? 'Success' : 'Completed with Errors');
-$summary_subject = $EMAIL_SUBJ_PREFIX . ' - Crawler (' . ($domains_processed_count > 0 ? 'Domains Processed: ' . $domains_processed_count : 'No Domains Processed') . ') - ' . $summary_subject_suffix;
+// --- Summary Email ---
+$summary_subject_suffix = empty($crawler_errors) ? 'Success' : 'Completed with Errors';
+$summary_subject = $EMAIL_SUBJ_PREFIX . ' - Crawler (Domains: ' . $domains_processed_count . ') - ' . $summary_subject_suffix;
 
 $summary_body = [];
 $summary_body[] = "Crawler Run Summary (" . date('Y-m-d H:i:s') . ")";
 $summary_body[] = "------------------------------------------";
 $summary_body[] = "Domains Processed: " . $domains_processed_count;
-$summary_body[] = "Total Emails Found in Run: " . $total_emails_found_in_run;
-$summary_body[] = "Errors Encountered: " . (empty($crawler_errors) ? 'None' : count($crawler_errors));
-
-if (!empty($crawler_errors)) {
-    $summary_body[] = "\n--- Details of Errors ---";
-    foreach ($crawler_errors as $err) {
-        $summary_body[] = "- " . $err;
+$summary_body[] = "Total Emails Found: " . $total_emails_found_in_run;
+if (isset($crawl_state)) {
+    $summary_body[] = "Emails Rejected: " . $crawl_state['total_rejected'];
+    if ($crawl_state['stop_reason']) {
+        $summary_body[] = "Stop Reason: " . $crawl_state['stop_reason'];
     }
 }
+$summary_body[] = "Errors: " . (empty($crawler_errors) ? 'None' : count($crawler_errors));
+if (!empty($crawler_errors)) {
+    $summary_body[] = "\n--- Errors ---";
+    foreach ($crawler_errors as $err) $summary_body[] = "- " . $err;
+}
 $summary_body[] = "------------------------------------------";
-$summary_body[] = "This report is generated by the crawler.php script.";
 
 $summary_message = implode("\n", $summary_body);
-
-$headers = 'From: ' . $EMAIL_FROM . "\r\n" .
-    'Reply-To: ' . $EMAIL_FROM . "\r\n" .
-    'X-Mailer: PHP/' . phpversion();
+$headers = 'From: ' . $EMAIL_FROM . "\r\n" . 'Reply-To: ' . $EMAIL_FROM . "\r\n" . 'X-Mailer: PHP/' . phpversion();
 
 if (!empty($EMAIL_TO)) {
     if (empty($crawler_errors) && $ENABLE_EMAIL_CRAWLER_SUCCESS === 1) {
-        mail($EMAIL_TO, $summary_subject, $summary_message, $headers);
-        log_activity("Crawler success summary email sent to: " . $EMAIL_TO);
+        @mail($EMAIL_TO, $summary_subject, $summary_message, $headers);
     } elseif (!empty($crawler_errors) && $ENABLE_EMAIL_CRAWLER_ERROR === 1) {
-        mail($EMAIL_TO, $summary_subject, $summary_message, $headers);
-        log_activity("Crawler error summary email sent to: " . $EMAIL_TO);
+        @mail($EMAIL_TO, $summary_subject, $summary_message, $headers);
     }
 }
 

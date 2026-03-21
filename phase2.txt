@@ -1,0 +1,335 @@
+
+TECHNICAL SPECIFICATION: EMAIL EXTRACTION EFFICIENCY AND SYSTEM OPTIMIZATION
+
+Read this entire specs and lets create a plan to address all these issues in the most efficient way possible and lets give our app and complete new design with bigger text, bigger button and a better UX overrall
+
+
+OBJECTIVE
+Review and improve the entire crawling and email extraction system to reduce wasted processing time, API cost, and low-quality outputs. The system must become intelligent in deciding which pages to crawl, which emails to accept, and when to stop processing and move to the next URL in the queue.
+
+The goal is to improve:
+•	extraction quality
+•	validation accuracy
+•	crawl efficiency
+•	queue performance
+•	cost per valid email
+
+⸻
+
+CORE PROBLEMS TO SOLVE
+1.	Fake or auto-generated email addresses
+Many pages generate large volumes of fake or low-value emails. The system must detect these early and avoid wasting time processing them.
+2.	Low-value page crawling
+The crawler spends time on pages that provide no useful data (spam pages, directories, mirrored content, traps). These must be detected early and skipped.
+3.	Inefficient extraction flow
+Emails are being extracted before validating page quality or domain relevance, leading to wasted effort.
+4.	Inefficient API usage
+APIs are being called too early, too often, or unnecessarily, increasing cost and slowing down the system.
+
+⸻
+
+PAGE QUALITY SCORING SYSTEM
+
+Each page must receive a score from 0 to 100 before deep processing.
+
+Positive indicators:
+•	business name present
+•	phone number present
+•	address present
+•	contact/about/team pages
+•	natural text surrounding email
+•	domain matches business identity
+•	consistent branding
+•	real social links
+
+Negative indicators:
+•	too many emails on one page
+•	random or repetitive email patterns
+•	low text uniqueness
+•	template or duplicated content
+•	spam-like HTML structure
+•	junk domains or suspicious TLDs
+•	hidden or obfuscated content
+
+Rules:
+•	score below threshold → stop processing immediately
+•	repeated low scores on same domain → reduce or block domain
+
+⸻
+
+EMAIL CONFIDENCE SCORING
+
+Each email must be scored from 0 to 100.
+
+Scoring factors:
+•	username quality
+•	domain quality
+•	surrounding context
+•	match with company/domain
+•	location on page (contact section vs footer spam)
+•	duplication across domains
+•	pattern validity
+
+Score ranges:
+•	80–100 = high confidence
+•	60–79 = acceptable
+•	40–59 = low confidence
+•	below 40 = reject
+
+⸻
+
+FAKE EMAIL DETECTION
+
+Reject or penalize emails with:
+•	random alphanumeric usernames
+•	excessive numbers
+•	repeated patterns
+•	disposable domains
+•	trap naming conventions
+•	no relation to business context
+
+Examples:
+asdf1234@
+user998877@
+test000111@
+noreply@
+no-reply@
+donotreply@
+
+Allow context-based exceptions for:
+info@
+sales@
+support@
+
+⸻
+
+DOMAIN QUALITY SCORING
+
+Evaluate domains before deep crawling.
+
+Signals:
+•	content quality
+•	business presence
+•	SSL
+•	domain consistency
+•	duplication
+•	contact data availability
+
+Actions:
+•	high-quality → deeper crawl
+•	medium → limited crawl
+•	low-quality → minimal crawl
+•	spam → stop immediately
+
+⸻
+
+CRAWL BUDGET CONTROL
+
+Assign dynamic limits per domain.
+
+Example:
+•	high-quality domain → up to 20 pages
+•	medium → up to 5 pages
+•	low → 1–2 pages
+•	spam → stop immediately
+
+Stop conditions:
+•	high fake email ratio
+•	consecutive low-quality pages
+•	no useful data after threshold
+•	duplicate content detected
+
+⸻
+
+QUEUE OPTIMIZATION
+
+Prioritize URLs based on:
+•	domain quality
+•	relevance
+•	historical yield
+•	likelihood of contact data
+
+Queue behavior:
+•	promote high-value domains
+•	demote low-value domains
+•	blacklist repeated junk domains
+•	avoid reprocessing duplicates
+
+⸻
+
+API USAGE OPTIMIZATION
+
+Conduct full audit and improve API efficiency.
+
+Key requirements:
+1.	Reduce unnecessary API calls
+
+•	avoid duplicate calls
+•	avoid calls on low-quality pages
+•	delay API calls until after filtering
+
+2.	Optimize API timing
+
+•	only call APIs after page scoring and validation
+•	prioritize high-value cases
+
+3.	Implement caching
+Cache:
+
+•	domain results
+•	page results
+•	email validation
+•	AI decisions
+
+4.	Batch and parallel processing
+
+•	batch requests where possible
+•	run parallel calls efficiently
+•	avoid sequential bottlenecks
+
+5.	Optimize AI usage
+
+•	do not call AI on every page
+•	use AI only for uncertain cases
+•	reduce prompt size and tokens
+
+Pipeline:
+rules → heuristics → AI
+6.	Optimize payload size
+
+•	send only relevant data
+•	remove unnecessary HTML
+•	extract key content before API calls
+
+7.	Improve retry logic
+
+•	use exponential backoff
+•	avoid repeated failures
+•	classify retry conditions
+
+8.	Manage rate limits
+
+•	smooth request distribution
+•	prioritize high-value calls
+
+9.	Evaluate providers
+
+•	compare cost, speed, and accuracy
+•	replace inefficient APIs
+
+10.	Track API metrics
+
+•	calls per valid email
+•	cost per email
+•	response times
+•	error rates
+
+⸻
+
+PROCESSING PIPELINE
+
+Stage 1: Pre-filter
+•	normalize URL
+•	remove duplicates
+•	reject invalid sources
+
+Stage 2: Page scan
+•	extract basic signals
+•	compute page score
+
+Stage 3: Early decision
+•	reject low-quality pages
+
+Stage 4: Extraction
+•	extract emails and contact data
+
+Stage 5: Validation
+•	apply rule-based filtering
+•	score emails
+
+Stage 6: Conditional API calls
+•	only for high-value cases
+
+Stage 7: AI evaluation
+•	only for uncertain scenarios
+
+Stage 8: Store and learn
+•	save results
+•	track rejection reasons
+•	update domain knowledge
+
+⸻
+
+VALIDATION SYSTEM
+
+Hard validation:
+•	syntax check
+•	optional MX check
+•	disposable domain filtering
+
+Soft validation:
+•	context relevance
+•	semantic match
+•	confidence score
+
+⸻
+
+REJECTION TRACKING
+
+Store reasons such as:
+•	invalid syntax
+•	disposable domain
+•	random pattern
+•	low-quality page
+•	duplicate email
+•	no business relevance
+•	spam classification
+
+⸻
+
+METRICS TO TRACK
+
+Efficiency:
+•	pages per valid email
+•	cost per email
+•	crawl depth per domain
+•	time spent on rejected domains
+
+Quality:
+•	accepted vs rejected ratio
+•	false positives
+•	bounce rates
+•	usefulness of emails
+
+Domain:
+•	yield per domain
+•	blacklist rate
+•	duplicate rate
+
+API:
+•	calls per email
+•	cost per call
+•	latency
+•	failure rate
+
+⸻
+
+SYSTEM IMPROVEMENTS
+•	maintain pattern libraries (fake emails, spam signals)
+•	implement domain memory (adaptive learning)
+•	prioritize contact-related pages
+•	detect duplicate content
+•	prevent crawl traps and loops
+
+⸻
+
+FINAL GOAL
+
+Build a system that:
+•	avoids fake pages and fake emails
+•	minimizes unnecessary API usage
+•	reduces cost and processing time
+•	prioritizes high-value data
+•	continuously learns and improves
+•	makes intelligent real-time decisions
+

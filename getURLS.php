@@ -16,53 +16,7 @@ register_shutdown_function(function() use ($lock_file) {
 });
 // --- END LOCK FILE MANAGEMENT ---
 
-// Helper to read a single setting field safely
-if (!function_exists('get_setting_value')) {
-    function get_setting_value($field) {
-        if (!is_string($field) || !preg_match('/^[a-zA-Z0-9_]+$/', $field)) return null;
-        global $conn;
-        // Ensure connection is still good or re-establish
-        if (!($conn instanceof mysqli) || !$conn->ping()) {
-            // Attempt to reconnect or log failure
-            // For now, assume global $conn is handled by db.php include
-            // In a more robust system, this would trigger a reconnection.
-            log_line("get_setting_value: DB connection lost or not initialized for field '{$field}'.");
-            return null;
-        }
-
-        $res = $conn->query("SELECT `{$field}` AS v FROM settings WHERE id = 1");
-        if ($res && ($row = $res->fetch_assoc())) {
-            return $row['v'];
-        }
-        return null;
-    }
-}
-
-// Force-flush helpers to stream output in real time (CLI and Browser)
-if (!function_exists('force_flush')) {
-    function force_flush() {
-        // Emit a tiny marker to create a chunk for proxies/buffers (browser)
-        if (php_sapi_name() !== 'cli') {
-            echo "<!-- FLUSH " . microtime(true) . " -->\n";
-        }
-        @ob_flush();
-        @flush();
-    }
-}
-
-// Mirror stream and log writes; always flush
-if (!function_exists('stream_message')) {
-    function stream_message($msg) {
-        $ts = date('Y-m-d H:i:s');
-        $line = "[$ts] " . (string)$msg;
-        if (php_sapi_name() === 'cli') {
-            echo $line . PHP_EOL;
-        } else {
-            echo "<script>appendLine(" . json_encode($line) . ");</script>\n";
-        }
-        force_flush();
-    }
-}
+// get_setting_value(), force_flush(), stream_message() are already loaded via db.php -> includes/functions.php
 
 /**
  * Logs a URL event (inserted or skipped) and adds it to the global printedUrls array.
@@ -83,32 +37,21 @@ function print_url(string $engine, string $location, int $rank, string $title, s
     stream_message($line); // Output to console/browser using existing stream_message helper
 }
 
-// Provide a fallback logger if missing
-if (!function_exists('log_activity')) {
-    function log_activity($message) {
-        $timestamp = date('Y-m-d H:i:s');
-        $line = "[$timestamp] " . (string)$message . "\n";
-        @file_put_contents(__DIR__ . '/crawler.log', $line, FILE_APPEND);
-        if (php_sapi_name() === 'cli') {
-            echo $line;
-        }
-        if (function_exists('stream_message')) {
-            @stream_message((string)$message);
-        }
-        force_flush();
-    }
+// log_activity() is already loaded via db.php -> includes/functions.php
+
+// Phase 2: Load blacklist functions if available
+$_blacklist_path = __DIR__ . '/includes/blacklist.php';
+if (file_exists($_blacklist_path)) {
+    require_once $_blacklist_path;
 }
-require_once __DIR__ . '/db.php';
 
 // ================== CONFIGURATION ==================
 
-// SerpAPI API keys (round-robin)
-// Store your SerpAPI keys here. The script will rotate through them for them for each request.
-$SERPAPI_KEYS = [
-    '1a59c632d23f16317ccc4a798b7aa0dde378e98f5843a1818753c12706d4646f', // fabio@demelos.com
-    //'65530219a8c233d1b1449027ae10220de381c04086a4be523e40f1c9105fc8b5',  // fabio@altapro.com
-    // Add more keys as needed
-];
+// SerpAPI API keys (round-robin) — loaded from .env (SERPAPI_KEYS, comma-separated)
+$SERPAPI_KEYS = array_filter(array_map('trim', explode(',', $_ENV['SERPAPI_KEYS'] ?? '')));
+if (empty($SERPAPI_KEYS)) {
+    report_error("No SerpAPI keys configured. Set SERPAPI_KEYS in .env file.");
+}
 
 // Search parameters - now fetched from settings table
 $RESULTS_PER_LOCATION = (int)(get_setting_value('results_per_location') ?? 50); // Target: Number of *new* domains to insert per engine/keyword/location combination
@@ -123,10 +66,28 @@ $CACHE_TTL = 21600; // 6 hours in seconds - How long to cache SerpAPI JSON respo
 // Global domains to exclude from search results (e.g., social media, directories, personal blogs)
 // These domains are generally not relevant for lead generation.
 $EXCLUDE_DOMAINS = [
+    // Blogging / website builder platforms
     '.blogspot.com', '.wordpress.com', '.wix.com', '.squarespace.com',
+    '.weebly.com', '.jimdo.com', '.site123.com', '.webflow.io',
+    '.godaddysites.com', '.carrd.co', '.strikingly.com',
+    // Social media / directories
     '.yelp.com', '.facebook.com', '.linkedin.com', '.instagram.com',
-    '.google.com', '.maps.google.com', '.yellowpages.com', '.bbb.org',
-    '.angi.com', '.homeadvisor.com', '.thumbtack.com', '.manta.com', '.houzz.com'
+    '.twitter.com', '.x.com', '.pinterest.com', '.tiktok.com',
+    '.youtube.com', '.reddit.com', '.quora.com', '.medium.com',
+    // Google properties
+    '.google.com', '.maps.google.com', '.googleapis.com', '.goo.gl',
+    // Business directories / aggregators
+    '.yellowpages.com', '.bbb.org', '.angi.com', '.homeadvisor.com',
+    '.thumbtack.com', '.manta.com', '.houzz.com', '.chamberofcommerce.com',
+    '.crunchbase.com', '.zoominfo.com', '.dnb.com', '.glassdoor.com',
+    '.indeed.com', '.buildzoom.com', '.porch.com', '.bark.com',
+    // Classifieds / marketplaces
+    '.amazon.com', '.ebay.com', '.etsy.com', '.alibaba.com',
+    '.craigslist.org', '.nextdoor.com',
+    // News / media
+    '.wikipedia.org', '.wikihow.com', '.nytimes.com', '.cnn.com',
+    // URL shorteners / redirect services
+    '.bit.ly', '.tinyurl.com', '.t.co',
 ];
 $EXCLUDE_TLDS = ['.gov', '.edu', '.mil', '.org']; // Top-Level Domains to exclude
 
@@ -800,6 +761,14 @@ foreach ($ENGINES as $engine_data) { // Loop through active engines from DB
                         }
 
                         if (isset($existingDomains[$domain_only_name])) {
+                            $seenThisRun[$domain_only_name] = true;
+                            $rank++;
+                            print_url($engine_name, $location_name, $rank, $r['title'] ?? '', $norm_url, $domain_only_name, false);
+                            continue;
+                        }
+
+                        // Phase 2: Skip blacklisted domains
+                        if (function_exists('is_domain_blacklisted') && is_domain_blacklisted($domain_only_name)) {
                             $seenThisRun[$domain_only_name] = true;
                             $rank++;
                             print_url($engine_name, $location_name, $rank, $r['title'] ?? '', $norm_url, $domain_only_name, false);

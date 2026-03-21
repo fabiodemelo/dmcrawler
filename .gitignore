@@ -1,0 +1,9 @@
+.env
+crawler.log
+crawler.lock
+crawler.running
+crawler.getemails.running
+getURLS.running
+cache/
+output/
+.idea/

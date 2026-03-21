@@ -81,14 +81,14 @@ $offset = ($currentPage - 1) * $itemsPerPage;
 
 // ========== Search, Filter, and Order parameters ==========
 $search = isset($_GET['search']) ? $conn->real_escape_string($_GET['search']) : '';
-$filter = isset($_GET['filter']) ? $_GET['filter'] : 'all';
+$filter = isset($_GET['filter']) && in_array($_GET['filter'], ['all', 'today', 'week', 'month', 'year']) ? $_GET['filter'] : 'all';
 $orderBy = isset($_GET['orderBy']) ? $_GET['orderBy'] : 'created_at';
 $orderDir = isset($_GET['orderDir']) && in_array(strtoupper($_GET['orderDir']), ['ASC', 'DESC']) ? $_GET['orderDir'] : 'DESC';
 
 // New column filters
 $filterDomain = isset($_GET['filter_domain']) ? $conn->real_escape_string($_GET['filter_domain']) : '';
 $filterEmail  = isset($_GET['filter_email'])  ? $conn->real_escape_string($_GET['filter_email'])  : ''; // This filter is not used in the UI, but kept for consistency
-$filterMa     = isset($_GET['filter_ma'])     ? $_GET['filter_ma'] : '';
+$filterMa     = isset($_GET['filter_ma']) && in_array($_GET['filter_ma'], ['mautic', 'scheduled', 'failed']) ? $_GET['filter_ma'] : '';
 
 // Whitelist orderBy columns
 $valid_order_columns = ['id', 'd.domain', 'e.name', 'e.email', 'e.created_at', 'e.ma'];
@@ -109,13 +109,15 @@ switch ($filter) {
     case 'year': $baseWhereClauses[] = 'YEAR(e.created_at) = YEAR(CURDATE())'; break;
 }
 
-// Column-specific filters
+// Column-specific filters (values already escaped via real_escape_string above)
 $columnWhereClauses = [];
 if ($filterDomain !== '') {
-    $columnWhereClauses[] = "d.domain = '$filterDomain'";
+    $escapedDomain = $conn->real_escape_string($filterDomain);
+    $columnWhereClauses[] = "d.domain = '{$escapedDomain}'";
 }
 if ($filterEmail !== '') {
-    $columnWhereClauses[] = "e.email = '$filterEmail'";
+    $escapedEmail = $conn->real_escape_string($filterEmail);
+    $columnWhereClauses[] = "e.email = '{$escapedEmail}'";
 }
 if ($filterMa !== '') {
     if ($filterMa === 'mautic') {
@@ -183,92 +185,90 @@ function sort_link($column, $text, $currentOrderBy, $currentOrderDir) {
 }
 ?>
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>View Emails</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emails — Demelos</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+    <link rel="stylesheet" href="assets/css/app.css">
     <style>
-        .table td, .table th { vertical-align: middle; }
-        /* Adjusted inline inputs to work within a combined cell */
-        .form-control-sm-inline {
-            width: 100%;
-            margin-bottom: 5px; /* Add some space between stacked inputs */
-        }
-        .form-control-sm-inline:last-of-type {
-            margin-bottom: 0; /* No margin after the last one */
-        }
-        .actions-col { width: 150px; }
-        /* NEW: Style for the domain filter dropdown */
-        .domain-filter-dropdown {
-            max-width: 200px; /* Set max-width for the dropdown */
-            width: 100%; /* Ensure it takes full width up to max-width */
-        }
+        .domain-filter-dropdown { max-width: 200px; width: 100%; }
     </style>
 </head>
 <body>
 <?php include 'nav.php'; ?>
 
-<div class="container-fluid">
+<div class="container-fluid px-4">
+    <div class="page-header">
+        <h1>Emails</h1>
+        <p>View and manage extracted emails across all domains.</p>
+    </div>
+
     <?= $message ?>
-    <form method="get" class="mb-4 p-3 bg-light border rounded">
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3 align-items-end">
+                <div class="col-md-5">
+                    <label for="search" class="form-label">Search</label>
+                    <input type="text" name="search" id="search" class="form-control" placeholder="Search by email, name or domain..." value="<?= htmlspecialchars($search) ?>">
+                </div>
+                <div class="col-md-3">
+                    <label for="filter_time" class="form-label">Time Period</label>
+                    <select name="filter" id="filter_time" class="form-select">
+                        <option value="all" <?= $filter == 'all' ? 'selected' : '' ?>>All Time</option>
+                        <option value="today" <?= $filter == 'today' ? 'selected' : '' ?>>Today</option>
+                        <option value="week" <?= $filter == 'week' ? 'selected' : '' ?>>This Week</option>
+                        <option value="month" <?= $filter == 'month' ? 'selected' : '' ?>>This Month</option>
+                        <option value="year" <?= $filter == 'year' ? 'selected' : '' ?>>This Year</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary w-100"><i class="fas fa-search me-2"></i>Search</button>
+                </div>
+                <div class="col-md-2">
+                    <a href="view_emails.php" class="btn btn-outline-secondary w-100"><i class="fas fa-times me-2"></i>Clear</a>
+                </div>
+                <input type="hidden" name="orderBy" value="<?= htmlspecialchars($orderBy) ?>">
+                <input type="hidden" name="orderDir" value="<?= htmlspecialchars($orderDir) ?>">
+                <input type="hidden" name="filter_domain" value="<?= htmlspecialchars($filterDomain) ?>">
+                <input type="hidden" name="filter_email" value="<?= htmlspecialchars($filterEmail) ?>">
+                <input type="hidden" name="filter_ma" value="<?= htmlspecialchars($filterMa) ?>">
+            </form>
+        </div>
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
         <div class="row g-3">
-            <div class="col-md-5">
-                <label for="search" class="form-label visually-hidden">Search</label>
-                <input type="text" name="search" id="search" class="form-control" placeholder="Search by email, name or domain..." value="<?= htmlspecialchars($search) ?>">
+            <div class="col-auto">
+                <div class="stat-card primary" style="padding:0.75rem 1.25rem;">
+                    <div class="stat-value" style="font-size:1.25rem;"><?= number_format($counts['mautic']) ?></div>
+                    <div class="stat-label">Synced</div>
+                </div>
             </div>
-            <div class="col-md-3">
-                <label for="filter_time" class="form-label visually-hidden">Filter by Time</label>
-                <select name="filter" id="filter_time" class="form-select">
-                    <option value="all" <?= $filter == 'all' ? 'selected' : '' ?>>All Time</option>
-                    <option value="today" <?= $filter == 'today' ? 'selected' : '' ?>>Today</option>
-                    <option value="week" <?= $filter == 'week' ? 'selected' : '' ?>>This Week</option>
-                    <option value="month" <?= $filter == 'month' ? 'selected' : '' ?>>This Month</option>
-                    <option value="year" <?= $filter == 'year' ? 'selected' : '' ?>>This Year</option>
-                </select>
+            <div class="col-auto">
+                <div class="stat-card warning" style="padding:0.75rem 1.25rem;">
+                    <div class="stat-value" style="font-size:1.25rem;"><?= number_format($counts['scheduled']) ?></div>
+                    <div class="stat-label">Pending</div>
+                </div>
             </div>
-            <div class="col-md-2">
-                <button type="submit" class="btn btn-primary w-100"><i class="fas fa-search"></i> Search</button>
+            <div class="col-auto">
+                <div class="stat-card danger" style="padding:0.75rem 1.25rem;">
+                    <div class="stat-value" style="font-size:1.25rem;"><?= number_format($counts['failed']) ?></div>
+                    <div class="stat-label">Failed</div>
+                </div>
             </div>
-            <div class="col-md-2">
-                <a href="view_emails.php" class="btn btn-secondary w-100"><i class="fas fa-eraser"></i> Clear</a>
-            </div>
-
         </div>
-        <!-- Preserve order params for filtering -->
-        <input type="hidden" name="orderBy" value="<?= htmlspecialchars($orderBy) ?>">
-        <input type="hidden" name="orderDir" value="<?= htmlspecialchars($orderDir) ?>">
-        <!-- Preserve current column filters too -->
-        <input type="hidden" name="filter_domain" value="<?= htmlspecialchars($filterDomain) ?>">
-        <input type="hidden" name="filter_email" value="<?= htmlspecialchars($filterEmail) ?>">
-        <input type="hidden" name="filter_ma" value="<?= htmlspecialchars($filterMa) ?>">
-        <!-- The 'page' parameter is intentionally NOT preserved here, to reset to page 1 on new search/filter -->
-    </form>
-
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <div class="d-flex gap-3 flex-wrap">
-            <span class="btn btn-primary text-white d-flex flex-column align-items-center py-2">
-                <small class="text-uppercase">Synced to Mautic</small>
-                <span class="fw-bold"><?= number_format($counts['mautic']) ?></span>
-            </span>
-            <span class="btn btn-warning text-dark d-flex flex-column align-items-center py-2">
-                <small class="text-uppercase">Pending Sync</small>
-                <span class="fw-bold"><?= number_format($counts['scheduled']) ?></span>
-            </span>
-            <span class="btn btn-danger text-white d-flex flex-column align-items-center py-2">
-                <small class="text-uppercase">Failed Sync</small>
-                <span class="fw-bold"><?= number_format($counts['failed']) ?></span>
-            </span>
-        </div>
-        <div>
+        <div class="d-flex gap-2">
             <a href="export.php?<?= http_build_query([
                     'filter' => $filter, 'search' => $search, 'filter_domain' => $filterDomain,
                     'filter_email' => $filterEmail, 'filter_ma' => $filterMa
-            ]) ?>" class="btn btn-success"><i class="fas fa-download"></i> Export CSV</a>
-            <a href="verifyemail.php" class="btn btn-success"><i class="fas fa-download"></i> Verify Emails</a>
+            ]) ?>" class="btn btn-success"><i class="fas fa-download me-2"></i>Export CSV</a>
+            <a href="verifyemail.php" class="btn btn-outline-secondary"><i class="fas fa-check-double me-2"></i>Verify Emails</a>
         </div>
-
     </div>
 
     <!-- Column Filters and Table -->
@@ -279,9 +279,9 @@ function sort_link($column, $text, $currentOrderBy, $currentOrderDir) {
             <input type="hidden" name="<?= htmlspecialchars($key) ?>" value="<?= htmlspecialchars($value) ?>">
         <?php endif; endforeach; ?>
 
-        <div class="table-responsive">
-            <table class="table table-striped table-bordered table-hover table-sm">
-                <thead class="table-success"> <!-- Changed from table-dark to table-success for light green -->
+        <div class="table-card">
+            <table class="table">
+                <thead>
                 <tr>
                     <th><?= sort_link('id', 'ID', $orderBy, $orderDir) ?></th>
                     <th>
@@ -350,7 +350,13 @@ function sort_link($column, $text, $currentOrderBy, $currentOrderDir) {
                     <?php endwhile; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="7" class="text-center text-muted py-4">No emails found for the current selection.</td>
+                        <td colspan="7">
+                            <div class="empty-state">
+                                <i class="fas fa-envelope"></i>
+                                <h4>No emails found</h4>
+                                <p>No emails match the current filters.</p>
+                            </div>
+                        </td>
                     </tr>
                 <?php endif; ?>
                 </tbody>

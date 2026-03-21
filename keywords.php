@@ -162,52 +162,45 @@ if ($result) {
 }
 ?>
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Manage Keywords</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Keywords — Demelos</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>
-        .table td, .table th { vertical-align: middle; }
-        .form-control-sm-inline {
-            width: 100%;
-        }
-        .keyword-column {
-            max-width: 300px; /* Set max width for keyword column */
-            word-wrap: break-word; /* Break long words */
-        }
-        .actions-col { width: 120px; }
-    </style>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+    <link rel="stylesheet" href="assets/css/app.css">
 </head>
 <body>
 <?php include 'nav.php'; ?>
 
-<div class="container mt-4">
-    <h1>Manage Keywords</h1>
+<div class="container-fluid px-4">
+    <div class="page-header">
+        <h1>Keywords</h1>
+        <p>Manage search keywords used for domain discovery.</p>
+    </div>
     <?= $message ?>
 
     <div class="card mb-4">
-        <div class="card-header">
-            Add New Keyword
-        </div>
         <div class="card-body">
-            <form method="post" class="row g-3 align-items-center">
+            <h3 class="mb-3">Add New Keyword</h3>
+            <form method="post" class="row g-3 align-items-end">
                 <input type="hidden" name="action" value="add">
                 <div class="col-md-8">
-                    <label for="newKeyword" class="visually-hidden">New Keyword</label>
+                    <label for="newKeyword" class="form-label">Keyword</label>
                     <input type="text" class="form-control" id="newKeyword" name="keyword" placeholder="e.g., Los Angeles" required>
                 </div>
                 <div class="col-md-4">
-                    <button type="submit" class="btn btn-success w-100"><i class="fas fa-plus"></i> Add Keyword</button>
+                    <button type="submit" class="btn btn-success w-100"><i class="fas fa-plus me-2"></i>Add Keyword</button>
                 </div>
             </form>
         </div>
     </div>
 
-    <div class="table-responsive">
-        <table class="table table-striped table-bordered table-hover table-sm">
-            <thead class="table-success">
+    <div class="table-card">
+        <table class="table">
+            <thead>
                 <tr>
                     <th><?= sort_link('id', 'ID', $orderBy, $orderDir) ?></th>
                     <th class="keyword-column"><?= sort_link('keyword', 'Keyword', $orderBy, $orderDir) ?></th>
@@ -245,7 +238,13 @@ if ($result) {
                     <?php endforeach; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="4" class="text-center text-muted py-4">No keywords found. Add one above!</td>
+                        <td colspan="4">
+                        <div class="empty-state">
+                            <i class="fas fa-key"></i>
+                            <h4>No keywords yet</h4>
+                            <p>Add your first keyword above to start discovering domains.</p>
+                        </div>
+                    </td>
                     </tr>
                 <?php endif; ?>
             </tbody>
