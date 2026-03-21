@@ -108,6 +108,24 @@ try {
         ];
     }
 
+    // Add last crawl run info
+    $lastRun = null;
+    try {
+        $lr = $conn->query("SELECT cm.*, d.domain FROM crawl_metrics cm JOIN domains d ON cm.domain_id = d.id ORDER BY cm.id DESC LIMIT 1");
+        if ($lr && $row = $lr->fetch_assoc()) {
+            $lastRun = [
+                'domain' => $row['domain'],
+                'pages' => (int)$row['pages_crawled'],
+                'emails' => (int)$row['valid_emails'],
+                'rejected' => (int)$row['rejected_emails'],
+                'duration' => (int)$row['total_time_seconds'],
+                'stop_reason' => $row['stop_reason'],
+                'ended_at' => $row['run_ended_at'],
+            ];
+        }
+    } catch (Throwable $e) {}
+    $status['last_run'] = $lastRun;
+
     echo json_encode($status);
     exit;
 

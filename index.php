@@ -340,6 +340,31 @@ function setProc(name, task) {
     }
 }
 
+function showLastRun(data) {
+    var lr = data.last_run;
+    if (!lr) return;
+    var crawlerStatus = document.getElementById('status-crawler');
+    var crawlerCard = document.getElementById('proc-crawler');
+    // Only update crawler card if it's idle
+    if (crawlerCard && !crawlerCard.classList.contains('is-running') && crawlerStatus) {
+        var ago = lr.ended_at ? timeAgo(lr.ended_at) : '';
+        crawlerStatus.innerHTML = '<span style="color:var(--text-muted)">Last: <strong>' + (lr.domain || '?') + '</strong> — ' +
+            lr.emails + ' emails, ' + lr.pages + ' pages' +
+            (ago ? ' <span style="opacity:0.6">(' + ago + ')</span>' : '') + '</span>';
+    }
+}
+
+function timeAgo(dateStr) {
+    var d = new Date(dateStr.replace(' ', 'T') + 'Z');
+    var now = new Date();
+    var diff = Math.floor((now - d) / 1000);
+    if (isNaN(diff) || diff < 0) return '';
+    if (diff < 60) return diff + 's ago';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    return Math.floor(diff / 86400) + 'd ago';
+}
+
 function updateStatus() {
     fetch('status_api.php', { cache: 'no-store' })
         .then(function(r) { return r.json(); })
@@ -350,6 +375,7 @@ function updateStatus() {
             setProc('geturls', t.geturls);
             setProc('getemails', t.getemails);
             setProc('addtomautic', t.addtomautic);
+            showLastRun(data);
         })
         .catch(function(e) { console.error('Status error:', e); });
 }
