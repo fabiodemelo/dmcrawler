@@ -121,6 +121,73 @@ if (!function_exists('normalize_url')) {
     }
 }
 
+// --- Strip tracking/junk query params from URLs ---
+if (!function_exists('clean_url')) {
+    function clean_url(string $url): string {
+        $parsed = parse_url($url);
+        if (!isset($parsed['query'])) return strtok($url, '#');
+
+        // Params to strip (tracking, session, analytics junk)
+        $stripParams = [
+            'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+            'fbclid', 'gclid', 'msclkid', 'mc_cid', 'mc_eid', 'ref', 'referer',
+            'source', 'campaign', 'affiliate', 'partner',
+            'sid', 'session', 'sessionid', 'phpsessid', 'jsessionid', 'token',
+            '_ga', '_gid', '_gl', 'hsCtaTracking', 'hsa_acc', 'hsa_cam',
+            'share', 'shared', 'lang', 'locale', 'cb', 'cachebuster', '_t', 'timestamp',
+        ];
+
+        parse_str($parsed['query'], $params);
+        foreach ($stripParams as $p) {
+            unset($params[strtolower($p)]);
+            unset($params[$p]);
+        }
+        // Also strip any param with very long values (likely session/hash tokens)
+        foreach ($params as $k => $v) {
+            if (is_string($v) && strlen($v) > 60) unset($params[$k]);
+        }
+
+        $base = ($parsed['scheme'] ?? 'https') . '://' . ($parsed['host'] ?? '') . ($parsed['path'] ?? '/');
+        if (!empty($params)) {
+            ksort($params); // normalize param order
+            $base .= '?' . http_build_query($params);
+        }
+        return $base;
+    }
+}
+
+// --- Detect dynamic page traps (calendars, infinite pagination, etc.) ---
+if (!function_exists('is_trap_url')) {
+    function is_trap_url(string $url, array &$pathPatternCounts, int $maxPerPattern = 3): bool {
+        $parsed = parse_url($url);
+        $path = $parsed['path'] ?? '/';
+
+        // Calendar/date traps: /2025/01/15, /calendar/2025-01-15
+        if (preg_match('/\/\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}/', $path)) return true;
+
+        // Infinite pagination: /page/999
+        if (preg_match('/\/page\/(\d+)/i', $path, $m) && (int)$m[1] > 20) return true;
+
+        // Query-based pagination past page 20
+        if (isset($parsed['query'])) {
+            parse_str($parsed['query'], $params);
+            foreach (['page', 'p', 'pg', 'offset', 'start'] as $pageParam) {
+                if (isset($params[$pageParam]) && (int)$params[$pageParam] > 20) return true;
+            }
+        }
+
+        // Path pattern limiting: collapse numbers to {N} and limit unique URLs per pattern
+        $patternPath = preg_replace('/\d+/', '{N}', $path);
+        if (!isset($pathPatternCounts[$patternPath])) {
+            $pathPatternCounts[$patternPath] = 0;
+        }
+        $pathPatternCounts[$patternPath]++;
+        if ($pathPatternCounts[$patternPath] > $maxPerPattern) return true;
+
+        return false;
+    }
+}
+
 // --- cURL Fetch Helper ---
 function fetch_page(string $url): array {
     $ch = curl_init();
@@ -201,6 +268,13 @@ function crawl_page(string $url, string $domain, array &$visited, int &$email_co
         log_activity($crawl_state['stop_reason']);
         return;
     }
+    // Stop if too many catalog/pattern emails (auto-generated product codes, not real contacts)
+    if (($crawl_state['catalog_rejected'] ?? 0) >= 10) {
+        $crawl_state['stopped'] = true;
+        $crawl_state['stop_reason'] = 'Too many catalog/auto-generated emails (' . $crawl_state['catalog_rejected'] . ')';
+        log_activity($crawl_state['stop_reason']);
+        return;
+    }
     $totalExtracted = $crawl_state['total_extracted'];
     if ($totalExtracted >= 5 && $crawl_state['total_rejected'] / $totalExtracted > $crawl_state['max_fake_ratio']) {
         $crawl_state['stopped'] = true;
@@ -210,11 +284,16 @@ function crawl_page(string $url, string $domain, array &$visited, int &$email_co
     }
 
     // === STAGE 1: Pre-filter ===
-    $url = strtok($url, '#');
+    $url = clean_url($url); // Strip tracking params, normalize query string
     if (isset($visited[$url])) return;
     // Skip non-HTML resources
     if (preg_match('/\.(jpg|jpeg|png|gif|pdf|zip|css|js|mp4|avi|mov|svg|woff|woff2|ttf|eot|ico)(\?.*)?$/i', $url)) return;
     if (stripos($url, 'cdn-cgi') !== false || stripos($url, 'mailto:') === 0) return;
+    // Detect dynamic page traps (calendars, infinite pagination, path flooding)
+    if (is_trap_url($url, $crawl_state['path_patterns'])) {
+        log_activity("TRAP: Skipping dynamic/trap URL: $url");
+        return;
+    }
 
     $visited[$url] = true;
     $pagesCrawled = count($visited);
@@ -298,7 +377,21 @@ function crawl_page(string $url, string $domain, array &$visited, int &$email_co
             continue;
         }
 
-        // 5b. TLD check
+        // 5b. Catalog/auto-generated email detection (e.g., sales.keg@domain, sales.kip@domain)
+        $catalogResult = detect_catalog_email($email);
+        if ($catalogResult['is_pattern']) {
+            // Check if this pattern is flooding (more than 2 of same pattern)
+            if (is_pattern_flooding($email, $crawl_state['email_patterns'], 2)) {
+                log_activity("REJECT (catalog pattern): $email — {$catalogResult['reason']}");
+                log_rejection($domain_id, $email, $url, $catalogResult['reason'], 'no_business_relevance');
+                $page_rejected++;
+                $crawl_state['total_rejected']++;
+                $crawl_state['catalog_rejected'] = ($crawl_state['catalog_rejected'] ?? 0) + 1;
+                continue;
+            }
+        }
+
+        // 5c. TLD check
         if (!is_allowed_email_tld($email)) {
             log_activity("REJECT (TLD): $email");
             log_rejection($domain_id, $email, $url, 'Unallowed TLD', 'bad_tld');
@@ -307,7 +400,7 @@ function crawl_page(string $url, string $domain, array &$visited, int &$email_co
             continue;
         }
 
-        // 5c. Confidence scoring
+        // 5d. Confidence scoring
         $conf = score_email_confidence($email, $html, $domain, $pageQuality);
 
         if ($conf['score'] < $crawl_state['email_confidence_threshold']) {
@@ -388,7 +481,7 @@ function crawl_page(string $url, string $domain, array &$visited, int &$email_co
         if (preg_match('/\.(jpg|jpeg|png|gif|pdf|zip|css|js|mp4|svg|woff|ico)(\?.*)?$/i', $link)) continue;
         if (stripos($link, 'cdn-cgi') !== false || stripos($link, 'mailto:') === 0) continue;
 
-        $absolute_link = normalize_url($url, $link);
+        $absolute_link = clean_url(normalize_url($url, $link));
         $parsed = parse_url($absolute_link);
         if (isset($parsed['host']) && str_replace('www.', '', $parsed['host']) !== str_replace('www.', '', $domain)) continue;
 
@@ -533,6 +626,9 @@ if ($row = $res->fetch_assoc()) {
         'consecutive_low_pages' => 0,
         'total_extracted' => 0,
         'total_rejected' => 0,
+        'catalog_rejected' => 0,
+        'email_patterns' => [],    // tracks catalog email pattern flooding
+        'path_patterns' => [],     // tracks URL path patterns for trap detection
         'stopped' => false,
         'stop_reason' => null,
     ];
@@ -634,6 +730,7 @@ $summary_body[] = "Domains Processed: " . $domains_processed_count;
 $summary_body[] = "Total Emails Found: " . $total_emails_found_in_run;
 if (isset($crawl_state)) {
     $summary_body[] = "Emails Rejected: " . $crawl_state['total_rejected'];
+    $summary_body[] = "Catalog/Pattern Rejected: " . ($crawl_state['catalog_rejected'] ?? 0);
     if ($crawl_state['stop_reason']) {
         $summary_body[] = "Stop Reason: " . $crawl_state['stop_reason'];
     }

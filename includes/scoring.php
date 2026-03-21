@@ -466,6 +466,80 @@ function score_domain_quality(string $domain, string $homepageHtml): array {
 }
 
 /**
+ * Detect auto-generated/catalog email patterns.
+ * e.g., sales.keg@korloy.com, sales.kip@korloy.com — product codes, not people.
+ *
+ * Legitimate: john.smith@domain.com (person), sales@domain.com (role account)
+ * Fake pattern: sales.xyz@domain.com, info.abc@domain.com (role + short code)
+ *
+ * @return array ['is_pattern' => bool, 'reason' => string|null, 'pattern_key' => string|null]
+ */
+function detect_catalog_email(string $email): array {
+    $parts = explode('@', $email);
+    if (count($parts) !== 2) return ['is_pattern' => false, 'reason' => null, 'pattern_key' => null];
+
+    $username = strtolower($parts[0]);
+    $emailDomain = strtolower($parts[1]);
+
+    // Role prefixes that, when combined with a short suffix, indicate catalog emails
+    $rolePrefixes = ['sales', 'info', 'support', 'contact', 'service', 'admin', 'office',
+                     'marketing', 'billing', 'order', 'orders', 'enquiry', 'inquiry',
+                     'export', 'import', 'purchase', 'account', 'accounts', 'dept', 'cs'];
+
+    // Check for role.shortcode pattern (e.g., sales.keg, info.mx, support.na)
+    if (preg_match('/^([a-z]+)[._]([a-z]{1,4})$/i', $username, $m)) {
+        $prefix = strtolower($m[1]);
+        $suffix = strtolower($m[2]);
+
+        if (in_array($prefix, $rolePrefixes)) {
+            // It's role.shortcode — this is a catalog/product code email
+            // Exception: common real name combos like "sales.manager" or longer suffixes
+            $realSuffixes = ['team', 'dept', 'admin', 'main', 'head', 'lead', 'mgr', 'dir'];
+            if (!in_array($suffix, $realSuffixes)) {
+                return [
+                    'is_pattern' => true,
+                    'reason' => "Catalog pattern: {$prefix}.{$suffix}@ (role + product/region code)",
+                    'pattern_key' => $prefix . '@' . $emailDomain,
+                ];
+            }
+        }
+    }
+
+    // Check for prefix + digits pattern (e.g., sales1@, sales02@, info3@)
+    if (preg_match('/^([a-z]+)(\d{1,3})$/', $username, $m)) {
+        $prefix = strtolower($m[1]);
+        if (in_array($prefix, $rolePrefixes)) {
+            return [
+                'is_pattern' => true,
+                'reason' => "Numbered role account: {$username}@",
+                'pattern_key' => $prefix . '@' . $emailDomain,
+            ];
+        }
+    }
+
+    return ['is_pattern' => false, 'reason' => null, 'pattern_key' => null];
+}
+
+/**
+ * Track email patterns per domain during a crawl run.
+ * Detects when too many emails follow the same pattern from one domain.
+ * Returns true if the email should be rejected based on pattern flooding.
+ */
+function is_pattern_flooding(string $email, array &$patternTracker, int $maxPerPattern = 2): bool {
+    $result = detect_catalog_email($email);
+    if (!$result['is_pattern']) return false;
+
+    $key = $result['pattern_key'];
+    if (!isset($patternTracker[$key])) {
+        $patternTracker[$key] = 0;
+    }
+    $patternTracker[$key]++;
+
+    // Allow first N of a pattern (e.g., sales@domain is fine), reject the rest
+    return $patternTracker[$key] > $maxPerPattern;
+}
+
+/**
  * Check allowed TLDs for email domains.
  */
 function is_allowed_email_tld(string $email): bool {
