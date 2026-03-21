@@ -124,53 +124,69 @@ function ensure_dir(string $dir): void {
     }
 }
 
-// ================== SEARCH QUERY BUILDING ==================
+// ================== SEARCH QUERY BUILDING (3-Phase Strategy) ==================
+
 /**
- * Constructs a search query string based on the engine, keyword, and location.
- * Tailors the query for different search engines to optimize results and avoid errors.
- *
- * @param string $engine The name of the search engine (e.g., 'google', 'yahoo', 'google_maps').
- * @param string $keyword The business type or search term (e.g., 'Factories').
- * @param string $location The geographic keyword (e.g., 'Utah', 'Los Angeles').
- * @return string The constructed query string. Returns an empty string if keyword or location is empty.
+ * Phase 1: Broad Discovery — natural language queries, no site: restrictions.
+ * Lets the search engine do fuzzy matching for better coverage.
+ */
+function buildQuery_phase1(string $engine, string $keyword, string $location): string {
+    if (empty($keyword) || empty($location)) return '';
+
+    if ($engine === 'google_maps') {
+        return "{$keyword} in {$location}";
+    }
+    // Natural query — no site: or -site: operators (those waste query space and
+    // we already filter unwanted domains post-fetch via should_exclude())
+    return "{$keyword} near {$location}";
+}
+
+/**
+ * Phase 2: Intent-Based Discovery — queries that target contact/about pages directly.
+ * Returns an array of query variants to try.
+ */
+function buildQueries_phase2(string $engine, string $keyword, string $location): array {
+    if (empty($keyword) || empty($location)) return [];
+
+    if ($engine === 'google_maps') {
+        // Maps only needs one query format
+        return ["{$keyword} {$location}"];
+    }
+
+    // Multiple intent-based queries — each targets a different angle
+    return [
+        "{$keyword} {$location} contact us email",
+        "{$keyword} {$location} \"about us\"",
+        "best {$keyword} companies in {$location}",
+        "top {$keyword} {$location} reviews",
+        "{$keyword} {$location} services",
+    ];
+}
+
+/**
+ * Phase 3: Competitor Mining — finds similar businesses based on top-performing domains.
+ * Uses "related:" operator (Google only) or similar domain queries.
+ */
+function buildQueries_phase3(string $engine, array $seedDomains): array {
+    if (empty($seedDomains)) return [];
+
+    $queries = [];
+    foreach ($seedDomains as $domain) {
+        if ($engine === 'google') {
+            $queries[] = "related:{$domain}";
+        } else {
+            // For non-Google engines, search for the domain to find competitors in same results
+            $queries[] = "\"{$domain}\" competitors alternatives";
+        }
+    }
+    return $queries;
+}
+
+/**
+ * Legacy wrapper — calls Phase 1 by default for backward compatibility.
  */
 function buildQuery(string $engine, string $keyword, string $location): string {
-    // Ensure both keyword and location are not empty to avoid creating an invalid query.
-    if (empty($keyword) || empty($location)) {
-        return '';
-    }
-
-    // These sites are generally not desired in organic web search results for business lead generation.
-    $common_neg_sites = [
-        'yelp.com', 'facebook.com', 'linkedin.com', 'instagram.com',
-        'google.com', 'maps.google.com', 'yellowpages.com', 'bbb.org',
-        'angi.com', 'homeadvisor.com', 'thumbtack.com', 'manta.com', 'houzz.com'
-    ];
-
-    // Formulate the exclusion part of the query (e.g., "-site:yelp.com")
-    $exclude_query_part = '';
-    foreach ($common_neg_sites as $site) {
-        $exclude_query_part .= " -site:{$site}";
-    }
-
-    // Combine keyword and location for the main query
-    // Example: "Los Angeles" "Factories"
-    $full_query_term = "\"{$location}\" \"{$keyword}\"";
-
-
-    if ($engine === 'yahoo') {
-        // Yahoo's query parser can be more sensitive to very long or complex queries.
-        return sprintf('%s%s', $full_query_term, $exclude_query_part);
-    } elseif ($engine === 'google_maps') {
-        // The 'google_maps' engine typically takes a simpler query, often just the business type and location.
-        // It does not use 'site:' operators in the same way as organic web search.
-        // For Google Maps, "keyword in location" is a common format.
-        return sprintf('%s in %s', $keyword, $location);
-    } else {
-        // For general web search engines like Google and Bing, use a broad search for '.com' domains
-        // and apply the full list of site exclusions.
-        return sprintf('%s site:*.com%s', $full_query_term, $exclude_query_part);
-    }
+    return buildQuery_phase1($engine, $keyword, $location);
 }
 
 // ================== SERPAPI INTERACTION ==================
@@ -447,6 +463,43 @@ function load_existing_domains(): array {
 }
 
 /**
+ * Phase 3: Get seed domains — top-performing crawled domains that found emails.
+ * These are used to find similar/competitor businesses via "related:" queries.
+ */
+function get_seed_domains(int $limit = 15): array {
+    $domains = [];
+    try {
+        $stmt = db()->query("
+            SELECT domain FROM domains
+            WHERE crawled = 1
+              AND emails_found > 0
+              AND (blacklisted = 0 OR blacklisted IS NULL)
+            ORDER BY emails_found DESC, quality_score DESC
+            LIMIT {$limit}
+        ");
+        while ($row = $stmt->fetch()) {
+            $domains[] = $row['domain'];
+        }
+    } catch (Throwable $e) {
+        // quality_score column might not exist if Phase 2 migration hasn't run
+        try {
+            $stmt = db()->query("
+                SELECT domain FROM domains
+                WHERE crawled = 1 AND emails_found > 0
+                ORDER BY emails_found DESC
+                LIMIT {$limit}
+            ");
+            while ($row = $stmt->fetch()) {
+                $domains[] = $row['domain'];
+            }
+        } catch (Throwable $e2) {
+            report_error("Failed to load seed domains: " . $e2->getMessage());
+        }
+    }
+    return $domains;
+}
+
+/**
  * Inserts a new unique domain into the `domains` table.
  * @param string $domain The domain name to insert.
  * @return bool True on successful insertion.
@@ -644,205 +697,227 @@ try {
     exit(1);
 }
 
-// --- Main Search Loop ---
-// Iterates through each active engine, then each keyword, then each location.
-// This ensures that each engine searches for each keyword in each specified location.
-foreach ($ENGINES as $engine_data) { // Loop through active engines from DB
-    $engine_id = $engine_data['ID'];
-    $engine_name = $engine_data['name'];
+// ================== CORE SEARCH FUNCTION ==================
+/**
+ * Executes a single search query against SerpAPI and inserts new domains.
+ * Returns the number of new domains inserted.
+ */
+function execute_search(string $engine_name, string $query, string $label, int $maxResults, array &$existingDomains, array &$seenThisRun): int {
+    global $RESULTS_PER_LOCATION, $MAX_PAGES, $OVERFETCH_FACTOR, $EXCLUDE_DOMAINS, $EXCLUDE_TLDS;
+    global $totalInserted, $errors, $fp;
 
-    foreach ($KEYWORDS as $keyword_data) { // Loop through active keywords
-        $keyword_id = $keyword_data['id'];
-        $keyword_name = $keyword_data['keyword'];
+    if (empty($query)) return 0;
 
-        foreach ($LOCATIONS as $location_data) { // Loop through active locations
-            $location_id = $location_data['id']; // Corrected to 'id'
-            $location_name = $location_data['name']; // Using 'name' for location name as per your query for 'locations' table
+    $collected = 0;
+    $rank = 0;
+    $page = 1;
+    $pagesWithoutInsert = 0;
+    $targetResults = min($maxResults, $RESULTS_PER_LOCATION);
 
-            // Trim names to ensure no unexpected whitespace causes issues
-            $engine_name = trim($engine_name);
-            $keyword_name = trim($keyword_name);
-            $location_name = trim($location_name);
+    while ($collected < $targetResults && $page <= $MAX_PAGES) {
+        try {
+            $json = serpapi_search_page($engine_name, $query, $targetResults * $OVERFETCH_FACTOR, $page);
+            $rawResults = parse_serp_results($json);
+        } catch (Throwable $e) {
+            report_error("{$label} (page {$page}) failed: " . $e->getMessage());
+            break;
+        }
 
-            // Check for empty names early before proceeding with search logic
-            if (empty($engine_name)) {
-                report_error("Skipping: Empty engine name for ID {$engine_id}.");
+        if (empty($rawResults)) break;
+
+        $insertedThisPage = 0;
+        foreach ($rawResults as $r) {
+            if ($collected >= $targetResults) break;
+
+            $norm_url = normalize_url($r['url']);
+            if (!$norm_url) continue;
+            if (should_exclude($norm_url, $EXCLUDE_DOMAINS, $EXCLUDE_TLDS)) continue;
+
+            $domain_only_name = domain_only($norm_url);
+            if (!$domain_only_name) continue;
+
+            if (isset($seenThisRun[$domain_only_name]) || isset($existingDomains[$domain_only_name])) {
+                $seenThisRun[$domain_only_name] = true;
+                $rank++;
                 continue;
             }
-            if (empty($keyword_name)) {
-                report_error("Skipping: Empty keyword name for ID {$keyword_id}.");
-                update_keyword_engine_search_status($keyword_id, $engine_id, $location_id, 'skipped_empty_keyword', 'Keyword name is empty.');
-                continue;
-            }
-            if (empty($location_name)) {
-                report_error("Skipping: Empty location name for ID {$location_id}.");
-                update_keyword_engine_search_status($keyword_id, $engine_id, $location_id, 'skipped_empty_location', 'Location name is empty.');
+
+            if (function_exists('is_domain_blacklisted') && is_domain_blacklisted($domain_only_name)) {
+                $seenThisRun[$domain_only_name] = true;
                 continue;
             }
 
-            // Check if this (keyword, engine, location) triplet was recently searched
+            try {
+                if (db_insert_domain($domain_only_name)) {
+                    $existingDomains[$domain_only_name] = true;
+                    $seenThisRun[$domain_only_name] = true;
+                    $collected++;
+                    $totalInserted++;
+                    $insertedThisPage++;
+                    $rank++;
+                    print_url($engine_name, $label, $rank, $r['title'] ?? '', $norm_url, $domain_only_name, true);
+                }
+            } catch (Throwable $e) {
+                report_error("Insert failed for [{$domain_only_name}]: " . $e->getMessage());
+            }
+        }
+
+        if ($insertedThisPage === 0) {
+            $pagesWithoutInsert++;
+        } else {
+            $pagesWithoutInsert = 0;
+        }
+
+        if ($pagesWithoutInsert >= 2) {
+            log_line("  No new domains for 2 pages — moving on.");
+            break;
+        }
+
+        $page++;
+        usleep(300000);
+    }
+
+    return $collected;
+}
+
+// ================== 3-PHASE MAIN SEARCH LOOP ==================
+
+$seenThisRun = []; // Global seen tracker across all phases
+
+// ═══════════════════════════════════════════════════════════════
+// PHASE 1: Broad Discovery
+// Natural language queries — "keyword near location"
+// ═══════════════════════════════════════════════════════════════
+log_line("═══ PHASE 1: Broad Discovery ═══");
+
+foreach ($ENGINES as $engine_data) {
+    $engine_id = (int)$engine_data['ID'];
+    $engine_name = trim($engine_data['name']);
+    if (empty($engine_name)) continue;
+
+    foreach ($KEYWORDS as $keyword_data) {
+        $keyword_id = (int)$keyword_data['id'];
+        $keyword_name = trim($keyword_data['keyword']);
+        if (empty($keyword_name)) continue;
+
+        foreach ($LOCATIONS as $location_data) {
+            $location_id = (int)$location_data['id'];
+            $location_name = trim($location_data['name']);
+            if (empty($location_name)) continue;
+
+            // Check cooldown
             $last_searched_dt = get_keyword_engine_search_status($keyword_id, $engine_id, $location_id);
             if ($last_searched_dt) {
-                $now_dt = new DateTime();
-                $interval = $now_dt->diff($last_searched_dt);
-                $hours_since_last_search = ($interval->days * 24) + $interval->h;
-
-                if ($hours_since_last_search < $SERP_COOLDOWN_HOURS) {
-                    log_line("Skipping [{$engine_name}] / [{$keyword_name}] in [{$location_name}]: Last searched {$hours_since_last_search} hours ago, within {$SERP_COOLDOWN_HOURS}h cooldown.");
-                    update_keyword_engine_search_status($keyword_id, $engine_id, $location_id, 'skipped_cooldown', "Skipped due to cooldown. Last search: " . $last_searched_dt->format('Y-m-d H:i:s'));
-                    continue; // Skip this combination
+                $hours_since = ((new DateTime())->diff($last_searched_dt)->days * 24) + (new DateTime())->diff($last_searched_dt)->h;
+                if ($hours_since < $SERP_COOLDOWN_HOURS) {
+                    log_line("  SKIP (cooldown): [{$engine_name}] {$keyword_name} in {$location_name}");
+                    continue;
                 }
             }
 
-            log_line("Searching [{$engine_name}] for [{$keyword_name}] in [{$location_name}]...");
+            $query = buildQuery_phase1($engine_name, $keyword_name, $location_name);
+            $label = "{$location_name} / {$keyword_name}";
 
-            // Write current search activity for dashboard display
+            log_line("P1: [{$engine_name}] {$keyword_name} near {$location_name}");
             @file_put_contents(__DIR__ . '/search_activity.json', json_encode([
+                'phase' => 1,
                 'engine' => $engine_name,
                 'keyword' => $keyword_name,
                 'location' => $location_name,
+                'query' => $query,
                 'started_at' => date('Y-m-d H:i:s'),
                 'inserted_so_far' => $totalInserted,
             ]));
 
-            $search_status = 'processing';
-            $search_notes = null;
-            $query_for_serpapi = '';
+            $found = execute_search($engine_name, $query, $label, $RESULTS_PER_LOCATION, $existingDomains, $seenThisRun);
+            $status = $found > 0 ? 'completed_ok' : 'no_results';
+            update_keyword_engine_search_status($keyword_id, $engine_id, $location_id, $status, "Phase 1: found {$found} new domains");
+        }
+    }
+}
 
-            try {
-                // Build query specific to engine, keyword, and location
-                $query_for_serpapi = buildQuery($engine_name, $keyword_name, $location_name);
+// ═══════════════════════════════════════════════════════════════
+// PHASE 2: Intent-Based Discovery
+// Queries targeting contact pages, about pages, review lists
+// ═══════════════════════════════════════════════════════════════
+log_line("═══ PHASE 2: Intent-Based Discovery ═══");
 
-                if (empty($query_for_serpapi)) {
-                    $error_msg = "Failed to build search query for engine '{$engine_name}', keyword '{$keyword_name}' and location '{$location_name}'.";
-                    report_error($error_msg . " Skipping.");
-                    $search_status = 'failed_query_build';
-                    $search_notes = $error_msg;
-                    update_keyword_engine_search_status($keyword_id, $engine_id, $location_id, $search_status, $search_notes);
-                    continue;
-                }
+foreach ($ENGINES as $engine_data) {
+    $engine_name = trim($engine_data['name']);
+    if (empty($engine_name)) continue;
+    // Skip google_maps for Phase 2 — it was already handled in Phase 1
+    if ($engine_name === 'google_maps') continue;
 
-                $collectedForBucket = 0;
-                $rank = 0;
-                $page = 1;
-                $pagesWithoutInsert = 0;
-                $seenThisRun = [];
+    foreach ($KEYWORDS as $keyword_data) {
+        $keyword_name = trim($keyword_data['keyword']);
+        if (empty($keyword_name)) continue;
 
-                while ($collectedForBucket < $RESULTS_PER_LOCATION && $page <= $MAX_PAGES) {
-                    try {
-                        $json = serpapi_search_page(
-                            $engine_name,
-                            $query_for_serpapi,
-                            $RESULTS_PER_LOCATION * $OVERFETCH_FACTOR,
-                            $page
-                        );
-                        $rawResults = parse_serp_results($json);
-                    } catch (Throwable $e) {
-                        report_error("{$engine_name} / {$keyword_name} in {$location_name} (page {$page}) failed: " . $e->getMessage());
-                        $search_status = 'failed_api';
-                        $search_notes = $e->getMessage();
-                        break;
-                    }
+        foreach ($LOCATIONS as $location_data) {
+            $location_name = trim($location_data['name']);
+            if (empty($location_name)) continue;
 
-                    if (empty($rawResults)) {
-                        log_line("No results for {$engine_name} / {$keyword_name} in {$location_name} on page {$page}.");
-                        if ($search_status === 'processing') {
-                            $search_status = 'no_results';
-                            $search_notes = "No results found on page {$page}.";
-                        }
-                        break;
-                    }
+            $queries = buildQueries_phase2($engine_name, $keyword_name, $location_name);
+            // Only run 2 intent queries per combo to manage API usage
+            $queries = array_slice($queries, 0, 2);
 
-                    $insertedThisPage = 0;
-                    foreach ($rawResults as $r) {
-                        if ($collectedForBucket >= $RESULTS_PER_LOCATION) break;
+            foreach ($queries as $qi => $query) {
+                $label = "P2-{$qi}: {$location_name} / {$keyword_name}";
+                log_line("P2: [{$engine_name}] {$query}");
+                @file_put_contents(__DIR__ . '/search_activity.json', json_encode([
+                    'phase' => 2,
+                    'engine' => $engine_name,
+                    'keyword' => $keyword_name,
+                    'location' => $location_name,
+                    'query' => $query,
+                    'started_at' => date('Y-m-d H:i:s'),
+                    'inserted_so_far' => $totalInserted,
+                ]));
 
-                        $norm_url = normalize_url($r['url']);
-                        if (!$norm_url) continue;
-                        if (should_exclude($norm_url, $EXCLUDE_DOMAINS, $EXCLUDE_TLDS)) continue;
-
-                        $domain_only_name = domain_only($norm_url);
-                        if (!$domain_only_name) continue;
-
-                        if (isset($seenThisRun[$domain_only_name])) {
-                            $rank++;
-                            print_url($engine_name, $location_name, $rank, $r['title'] ?? '', $norm_url, $domain_only_name, false);
-                            continue;
-                        }
-
-                        if (isset($existingDomains[$domain_only_name])) {
-                            $seenThisRun[$domain_only_name] = true;
-                            $rank++;
-                            print_url($engine_name, $location_name, $rank, $r['title'] ?? '', $norm_url, $domain_only_name, false);
-                            continue;
-                        }
-
-                        // Phase 2: Skip blacklisted domains
-                        if (function_exists('is_domain_blacklisted') && is_domain_blacklisted($domain_only_name)) {
-                            $seenThisRun[$domain_only_name] = true;
-                            $rank++;
-                            print_url($engine_name, $location_name, $rank, $r['title'] ?? '', $norm_url, $domain_only_name, false);
-                            continue;
-                        }
-
-                        try {
-                            $ok = db_insert_domain($domain_only_name);
-                            if ($ok) {
-                                $existingDomains[$domain_only_name] = true;
-                                $seenThisRun[$domain_only_name] = true;
-                                $collectedForBucket++;
-                                $totalInserted++;
-                                $insertedThisPage++;
-                            }
-                        } catch (Throwable $e) {
-                            report_error("Insert failed for domain [$domain_only_name]: " . $e->getMessage());
-                        }
-
-                        $rank++;
-                        print_url($engine_name, $location_name, $rank, $r['title'] ?? '', $norm_url, $domain_only_name, $insertedThisPage > 0);
-                    }
-
-                    if ($insertedThisPage === 0) {
-                        $pagesWithoutInsert++;
-                    } else {
-                        $pagesWithoutInsert = 0;
-                    }
-
-                    if ($pagesWithoutInsert >= 2) {
-                        log_line("No new domains for two pages in a row; stopping for {$engine_name} / {$keyword_name} in {$location_name}.");
-                        if ($search_status === 'processing') {
-                            $search_status = 'completed_short';
-                            $search_notes = "Stopped: no new domains for 2 consecutive pages.";
-                        }
-                        break;
-                    }
-
-                    $page++;
-                    usleep(300000);
-                }
-
-                if ($search_status === 'processing') {
-                    if ($collectedForBucket < $RESULTS_PER_LOCATION) {
-                        $miss = $RESULTS_PER_LOCATION - $collectedForBucket;
-                        $search_notes = ($search_notes ?? '') . " Short by {$miss} NEW domains.";
-                        log_line("INFO: {$engine_name}/{$keyword_name} in {$location_name} short by {$miss} NEW domains after {$page} pages.");
-                        $search_status = 'completed_short_target';
-                    } else {
-                        $search_status = 'completed_ok';
-                        $search_notes = "Achieved {$RESULTS_PER_LOCATION} new domains.";
-                    }
-                }
-            } catch (Throwable $e) {
-                report_error("Unhandled error during search for [{$engine_name}] / [{$keyword_name}] in [{$location_name}]: " . $e->getMessage());
-                $search_status = 'failed_unhandled_exception';
-                $search_notes = $e->getMessage();
+                // Lower target for intent queries — they're supplementary
+                execute_search($engine_name, $query, $label, 20, $existingDomains, $seenThisRun);
+                usleep(500000); // Extra delay between intent queries
             }
+        }
+    }
+}
 
-            update_keyword_engine_search_status($keyword_id, $engine_id, $location_id, $search_status, $search_notes);
+// ═══════════════════════════════════════════════════════════════
+// PHASE 3: Competitor Mining
+// "related:domain.com" queries based on top-performing domains
+// ═══════════════════════════════════════════════════════════════
+log_line("═══ PHASE 3: Competitor Mining ═══");
 
-        } // End of foreach ($LOCATIONS)
-    } // End of foreach ($KEYWORDS)
-} // End of foreach ($ENGINES)
+$seedDomains = get_seed_domains(15);
+if (empty($seedDomains)) {
+    log_line("  No seed domains available for competitor mining (need crawled domains with emails).");
+} else {
+    log_line("  Using " . count($seedDomains) . " seed domains: " . implode(', ', array_slice($seedDomains, 0, 5)) . '...');
+
+    // Only run Phase 3 on google (related: is a Google operator)
+    foreach (['google'] as $engine_name) {
+        $queries = buildQueries_phase3($engine_name, $seedDomains);
+
+        foreach ($queries as $qi => $query) {
+            $seedDomain = $seedDomains[$qi] ?? 'unknown';
+            $label = "P3: related to {$seedDomain}";
+            log_line("P3: [{$engine_name}] {$query}");
+            @file_put_contents(__DIR__ . '/search_activity.json', json_encode([
+                'phase' => 3,
+                'engine' => $engine_name,
+                'keyword' => "related:{$seedDomain}",
+                'location' => 'competitor mining',
+                'query' => $query,
+                'started_at' => date('Y-m-d H:i:s'),
+                'inserted_so_far' => $totalInserted,
+            ]));
+
+            execute_search($engine_name, $query, $label, 10, $existingDomains, $seenThisRun);
+            usleep(500000);
+        }
+    }
+}
+
+log_line("═══ All 3 phases complete ═══");
 
 // Close the CSV file handler if it was opened
 if ($fp) { fclose($fp); }

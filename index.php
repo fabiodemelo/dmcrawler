@@ -449,11 +449,16 @@ function showLiveActivity(live) {
     if (live.search) {
         hasActivity = true;
         var s = live.search;
+        var phaseLabel = s.phase ? 'P' + s.phase : '';
+        var phaseIcon = s.phase === 3 ? 'fa-project-diagram' : (s.phase === 2 ? 'fa-bullseye' : 'fa-search');
+        var phaseColor = s.phase === 3 ? '#a78bfa' : (s.phase === 2 ? '#f59e0b' : '#60a5fa');
         html += '<div style="margin-bottom:8px;">';
-        html += '<i class="fas fa-search" style="color:#60a5fa;margin-right:6px;"></i>';
+        html += '<i class="fas ' + phaseIcon + '" style="color:' + phaseColor + ';margin-right:6px;"></i>';
+        if (phaseLabel) html += '<span style="color:' + phaseColor + ';font-weight:700;font-size:0.75rem;margin-right:6px;">' + phaseLabel + '</span>';
         html += 'Searching <span class="la-engine">' + s.engine + '</span>';
         html += ' in <span class="la-location">' + s.location + '</span>';
         html += ' for <span class="la-keyword">' + s.keyword + '</span>';
+        if (s.query) html += '<div style="color:rgba(255,255,255,0.35);font-size:0.75rem;margin-top:2px;word-break:break-all;">' + s.query + '</div>';
         html += '<div class="la-stat">' + (s.inserted_so_far || 0) + ' domains found so far</div>';
         html += '</div>';
     }
