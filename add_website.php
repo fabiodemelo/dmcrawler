@@ -354,6 +354,9 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
                     </td>
                     <td class="text-center">
                         <div class="btn-group btn-group-sm">
+                            <a href="run_crawler.php?domain_id=<?= $row['id'] ?>" class="btn btn-outline-success" title="Crawl Now" onclick="return confirm('Start crawling <?= htmlspecialchars($row['domain']) ?> now?');">
+                                <i class="fas fa-spider"></i>
+                            </a>
                             <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editModal<?= $row['id'] ?>">
                                 <i class="fas fa-edit"></i>
                             </button>

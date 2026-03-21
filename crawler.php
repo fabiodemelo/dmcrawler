@@ -534,15 +534,30 @@ if (!ensure_db_connection()) {
     exit(1);
 }
 
-// Select next domain (skip blacklisted, prioritize by quality + priority)
-$domain_query = "SELECT * FROM domains WHERE crawled = 0 AND donot = 0";
-// Check if blacklisted column exists (Phase 2 migration may not have run)
+// Check for --domain=ID argument (crawl a specific domain)
+$forced_domain_id = 0;
+foreach ($argv ?? [] as $arg) {
+    if (preg_match('/^--domain=(\d+)$/', $arg, $m)) {
+        $forced_domain_id = (int)$m[1];
+    }
+}
+
+// Select domain to crawl
 $has_blacklisted = (bool)$conn->query("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'domains' AND COLUMN_NAME = 'blacklisted'");
-if ($has_blacklisted) {
-    $domain_query .= " AND (blacklisted = 0 OR blacklisted IS NULL)";
-    $domain_query .= " ORDER BY priority DESC, COALESCE(quality_score, 50) DESC, id ASC LIMIT 1";
+
+if ($forced_domain_id > 0) {
+    // Crawl a specific domain by ID (regardless of crawled status — re-crawl it)
+    $domain_query = "SELECT * FROM domains WHERE id = {$forced_domain_id} LIMIT 1";
+    stream_message("Forced crawl for domain ID: {$forced_domain_id}");
 } else {
-    $domain_query .= " ORDER BY priority DESC, id ASC LIMIT 1";
+    // Select next domain in queue (skip blacklisted, prioritize by quality + priority)
+    $domain_query = "SELECT * FROM domains WHERE crawled = 0 AND donot = 0";
+    if ($has_blacklisted) {
+        $domain_query .= " AND (blacklisted = 0 OR blacklisted IS NULL)";
+        $domain_query .= " ORDER BY priority DESC, COALESCE(quality_score, 50) DESC, id ASC LIMIT 1";
+    } else {
+        $domain_query .= " ORDER BY priority DESC, id ASC LIMIT 1";
+    }
 }
 
 $res = $conn->query($domain_query);
