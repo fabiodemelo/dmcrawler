@@ -695,6 +695,16 @@ foreach ($ENGINES as $engine_data) { // Loop through active engines from DB
             }
 
             log_line("Searching [{$engine_name}] for [{$keyword_name}] in [{$location_name}]...");
+
+            // Write current search activity for dashboard display
+            @file_put_contents(__DIR__ . '/search_activity.json', json_encode([
+                'engine' => $engine_name,
+                'keyword' => $keyword_name,
+                'location' => $location_name,
+                'started_at' => date('Y-m-d H:i:s'),
+                'inserted_so_far' => $totalInserted,
+            ]));
+
             $search_status = 'processing';
             $search_notes = null;
             $query_for_serpapi = '';
@@ -921,6 +931,9 @@ if ($shouldSendEmail) {
     @mail($EMAIL_TO, $subject, implode("\n", $bodyLines), implode("\r\n", $headers));
 }
 
+
+// Clear search activity file
+@unlink(__DIR__ . '/search_activity.json');
 
 // Final summary message to console/log
 log_line("Total NEW domains inserted: $totalInserted");

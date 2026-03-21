@@ -60,6 +60,18 @@ if (!function_exists('stream_stats_crawler')) {
         $rejected = $extra['rejected'] ?? 0;
         $budget = $extra['budget'] ?? '?';
         $quality = $extra['quality'] ?? '?';
+        // Update live activity file for dashboard
+        @file_put_contents(__DIR__ . '/crawl_activity.json', json_encode([
+            'domain' => $domain,
+            'pages' => (int)$pages,
+            'budget' => $budget,
+            'emails' => (int)$emails,
+            'rejected' => (int)$rejected,
+            'quality' => $quality,
+            'elapsed' => (int)$elapsed,
+            'rate' => $rate,
+            'updated_at' => date('Y-m-d H:i:s'),
+        ]));
         if (php_sapi_name() === 'cli') {
             echo "[STATS] domain={$domain} | pages={$pages}/{$budget} | emails={$emails} | rejected={$rejected} | quality={$quality} | {$rate} p/s" . PHP_EOL;
             force_flush();
@@ -580,6 +592,15 @@ if ($row = $res->fetch_assoc()) {
 
     $GLOBALS['__crawl_t0'] = microtime(true);
 
+    // Write current crawl activity for dashboard display
+    @file_put_contents(__DIR__ . '/crawl_activity.json', json_encode([
+        'domain' => $host_domain,
+        'domain_id' => $domain_id,
+        'started_at' => date('Y-m-d H:i:s'),
+        'pages' => 0,
+        'emails' => 0,
+    ]));
+
     log_activity("=== START Crawl: $host_domain ===");
     stream_message("=== START Crawl: $host_domain ===");
 
@@ -711,6 +732,9 @@ if ($row = $res->fetch_assoc()) {
             $stmt->close();
         }
     }
+
+    // Clear crawl activity file
+    @unlink(__DIR__ . '/crawl_activity.json');
 
     $stop_info = $crawl_state['stop_reason'] ? " (Stopped: {$crawl_state['stop_reason']})" : '';
     log_activity("=== END Crawl: $host_domain | Emails: $email_count | Rejected: {$crawl_state['total_rejected']} | Pages: $urls_crawled_count{$stop_info} ===");

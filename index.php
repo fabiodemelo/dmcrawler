@@ -194,11 +194,82 @@ $acceptRate = ($totalEmailsFound + $totalRejected) > 0 ? round($totalEmailsFound
                         </div>
                         <?php endforeach; ?>
                     </div>
+
+                    <!-- Live Activity Box -->
+                    <div id="live-activity-box" class="mt-3" style="display:none;">
+                        <div class="live-activity-card">
+                            <div class="live-activity-header">
+                                <span class="live-pulse"></span>
+                                <span class="live-activity-title" id="live-activity-title">Activity</span>
+                            </div>
+                            <div class="live-activity-body" id="live-activity-body"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 </div>
+
+<style>
+.live-activity-card {
+    background: linear-gradient(135deg, #0f172a, #1e293b);
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(37,99,235,0.3);
+    overflow: hidden;
+}
+.live-activity-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0.6rem 1rem;
+    background: rgba(37,99,235,0.1);
+    border-bottom: 1px solid rgba(37,99,235,0.15);
+}
+.live-pulse {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #16a34a;
+    animation: pulse 1.5s ease-in-out infinite;
+    flex-shrink: 0;
+}
+.live-activity-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: rgba(255,255,255,0.5);
+}
+.live-activity-body {
+    padding: 0.85rem 1rem;
+    font-family: ui-monospace, 'Menlo', 'Consolas', monospace;
+    font-size: 0.85rem;
+    color: #d9f99d;
+    line-height: 1.5;
+}
+.live-activity-body .la-engine {
+    color: #60a5fa;
+    font-weight: 700;
+}
+.live-activity-body .la-location {
+    color: #f59e0b;
+    font-weight: 700;
+}
+.live-activity-body .la-keyword {
+    color: #34d399;
+    font-weight: 700;
+}
+.live-activity-body .la-domain {
+    color: #a78bfa;
+    font-weight: 700;
+}
+.live-activity-body .la-stat {
+    color: rgba(255,255,255,0.6);
+    font-size: 0.8rem;
+    margin-top: 4px;
+}
+</style>
 
 <style>
 .proc-card {
@@ -365,6 +436,55 @@ function timeAgo(dateStr) {
     return Math.floor(diff / 86400) + 'd ago';
 }
 
+function showLiveActivity(live) {
+    var box = document.getElementById('live-activity-box');
+    var title = document.getElementById('live-activity-title');
+    var body = document.getElementById('live-activity-body');
+    if (!box || !body) return;
+
+    var hasActivity = false;
+    var html = '';
+
+    // Search activity (Get URLs)
+    if (live.search) {
+        hasActivity = true;
+        var s = live.search;
+        html += '<div style="margin-bottom:8px;">';
+        html += '<i class="fas fa-search" style="color:#60a5fa;margin-right:6px;"></i>';
+        html += 'Searching <span class="la-engine">' + s.engine + '</span>';
+        html += ' in <span class="la-location">' + s.location + '</span>';
+        html += ' for <span class="la-keyword">' + s.keyword + '</span>';
+        html += '<div class="la-stat">' + (s.inserted_so_far || 0) + ' domains found so far</div>';
+        html += '</div>';
+    }
+
+    // Crawl activity
+    if (live.crawl) {
+        hasActivity = true;
+        var c = live.crawl;
+        html += '<div>';
+        html += '<i class="fas fa-spider" style="color:#a78bfa;margin-right:6px;"></i>';
+        html += 'Crawling <span class="la-domain">' + c.domain + '</span>';
+        if (c.pages !== undefined) {
+            html += '<div class="la-stat">';
+            html += 'Pages: ' + c.pages + (c.budget ? '/' + c.budget : '');
+            html += ' &bull; Emails: ' + (c.emails || 0);
+            html += ' &bull; Rejected: ' + (c.rejected || 0);
+            if (c.quality && c.quality !== '?') html += ' &bull; Quality: ' + c.quality;
+            html += '</div>';
+        }
+        html += '</div>';
+    }
+
+    if (hasActivity) {
+        title.textContent = 'Live Activity';
+        body.innerHTML = html;
+        box.style.display = 'block';
+    } else {
+        box.style.display = 'none';
+    }
+}
+
 function updateStatus() {
     fetch('status_api.php', { cache: 'no-store' })
         .then(function(r) { return r.json(); })
@@ -376,6 +496,7 @@ function updateStatus() {
             setProc('getemails', t.getemails);
             setProc('addtomautic', t.addtomautic);
             showLastRun(data);
+            showLiveActivity(data.live || {});
         })
         .catch(function(e) { console.error('Status error:', e); });
 }

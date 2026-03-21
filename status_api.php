@@ -108,6 +108,22 @@ try {
         ];
     }
 
+    // Live activity data (what's happening right now)
+    $liveActivity = [];
+    $crawlFile = $base_dir . 'crawl_activity.json';
+    if (is_file($crawlFile)) {
+        $raw = @file_get_contents($crawlFile);
+        $data = json_decode($raw, true);
+        if (is_array($data)) $liveActivity['crawl'] = $data;
+    }
+    $searchFile = $base_dir . 'search_activity.json';
+    if (is_file($searchFile)) {
+        $raw = @file_get_contents($searchFile);
+        $data = json_decode($raw, true);
+        if (is_array($data)) $liveActivity['search'] = $data;
+    }
+    $status['live'] = $liveActivity;
+
     // Add last crawl run info
     $lastRun = null;
     try {
