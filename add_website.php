@@ -4,6 +4,31 @@ error_reporting(E_ALL);
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 
+// AJAX toggle API — priority or donot (handled early, before output buffering)
+if (isset($_GET['ajax_toggle'])) {
+    include 'auth_check.php';
+    include 'db.php';
+    header('Content-Type: application/json');
+    $id = (int)($_GET['id'] ?? 0);
+    $field = $_GET['field'] ?? '';
+    if ($id <= 0 || !in_array($field, ['priority', 'donot'])) {
+        echo json_encode(['ok' => false, 'error' => 'Invalid params']);
+        exit;
+    }
+    $res = $conn->query("SELECT `{$field}` FROM domains WHERE id = {$id} LIMIT 1");
+    if (!$res || !($row = $res->fetch_assoc())) {
+        echo json_encode(['ok' => false, 'error' => 'Domain not found']);
+        exit;
+    }
+    $newVal = (int)$row[$field] ? 0 : 1;
+    $stmt = $conn->prepare("UPDATE domains SET `{$field}` = ? WHERE id = ? LIMIT 1");
+    $stmt->bind_param('ii', $newVal, $id);
+    $stmt->execute();
+    $stmt->close();
+    echo json_encode(['ok' => true, 'field' => $field, 'id' => $id, 'value' => $newVal]);
+    exit;
+}
+
 ob_start(); // Start output buffering to prevent "headers already sent" errors
 
 // add_website.php - Manage Domains (Add, View, Edit, Delete)
@@ -33,30 +58,6 @@ function redirect_self(array $params = []): void {
 }
 
 $message = '';
-
-// AJAX toggle API — priority or donot
-if (isset($_GET['ajax_toggle'])) {
-    header('Content-Type: application/json');
-    $id = (int)($_GET['id'] ?? 0);
-    $field = $_GET['field'] ?? '';
-    if ($id <= 0 || !in_array($field, ['priority', 'donot'])) {
-        echo json_encode(['ok' => false, 'error' => 'Invalid params']);
-        exit;
-    }
-    // Read current value and flip it
-    $res = $conn->query("SELECT `{$field}` FROM domains WHERE id = {$id} LIMIT 1");
-    if (!$res || !($row = $res->fetch_assoc())) {
-        echo json_encode(['ok' => false, 'error' => 'Domain not found']);
-        exit;
-    }
-    $newVal = (int)$row[$field] ? 0 : 1;
-    $stmt = $conn->prepare("UPDATE domains SET `{$field}` = ? WHERE id = ? LIMIT 1");
-    $stmt->bind_param('ii', $newVal, $id);
-    $stmt->execute();
-    $stmt->close();
-    echo json_encode(['ok' => true, 'field' => $field, 'id' => $id, 'value' => $newVal]);
-    exit;
-}
 
 // Handle POST actions (Add/Update/Delete Domain)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
