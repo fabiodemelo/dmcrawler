@@ -368,23 +368,19 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
                     <td><?= number_format($row['urls_crawled']) ?></td>
                     <td><?= number_format($row['emails_found']) ?></td>
                     <td>
-                        <span class="badge toggle-badge <?= $row['priority'] ? 'bg-warning text-dark' : 'bg-light text-muted' ?>"
-                              id="priority-<?= $row['id'] ?>"
+                        <span class="badge toggle-badge js-toggle <?= $row['priority'] ? 'bg-warning text-dark' : 'bg-light text-muted' ?>"
                               data-id="<?= $row['id'] ?>"
                               data-field="priority"
                               data-value="<?= $row['priority'] ?>"
-                              onclick="toggleField(this)"
                               style="cursor:pointer;user-select:none;">
                             <?= $row['priority'] ? 'High' : 'Normal' ?>
                         </span>
                     </td>
                     <td>
-                        <span class="badge toggle-badge <?= $row['donot'] ? 'bg-danger' : 'bg-light text-muted' ?>"
-                              id="donot-<?= $row['id'] ?>"
+                        <span class="badge toggle-badge js-toggle <?= $row['donot'] ? 'bg-danger' : 'bg-light text-muted' ?>"
                               data-id="<?= $row['id'] ?>"
                               data-field="donot"
                               data-value="<?= $row['donot'] ?>"
-                              onclick="toggleField(this)"
                               style="cursor:pointer;user-select:none;">
                             <?= $row['donot'] ? 'Skip' : 'Crawl' ?>
                         </span>
@@ -503,13 +499,14 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-<script>
-function toggleField(el) {
+<script data-cfasync="false">
+document.addEventListener('click', function(e) {
+    var el = e.target.closest('.js-toggle');
+    if (!el) return;
+
     var id = el.dataset.id;
     var field = el.dataset.field;
-    var oldVal = parseInt(el.dataset.value);
 
-    // Immediate visual feedback
     el.style.opacity = '0.5';
     el.style.pointerEvents = 'none';
 
@@ -525,13 +522,12 @@ function toggleField(el) {
 
             if (field === 'priority') {
                 el.textContent = v ? 'High' : 'Normal';
-                el.className = 'badge toggle-badge ' + (v ? 'bg-warning text-dark' : 'bg-light text-muted');
+                el.className = 'badge toggle-badge js-toggle ' + (v ? 'bg-warning text-dark' : 'bg-light text-muted');
             } else if (field === 'donot') {
                 el.textContent = v ? 'Skip' : 'Crawl';
-                el.className = 'badge toggle-badge ' + (v ? 'bg-danger' : 'bg-light text-muted');
+                el.className = 'badge toggle-badge js-toggle ' + (v ? 'bg-danger' : 'bg-light text-muted');
             }
 
-            // Brief flash to confirm save
             el.style.transform = 'scale(1.2)';
             setTimeout(function() { el.style.transform = ''; }, 200);
         })
@@ -540,7 +536,7 @@ function toggleField(el) {
             el.style.pointerEvents = '';
             alert('Network error');
         });
-}
+});
 </script>
 <style>
 .toggle-badge {
