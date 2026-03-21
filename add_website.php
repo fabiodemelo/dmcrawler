@@ -34,6 +34,30 @@ function redirect_self(array $params = []): void {
 
 $message = '';
 
+// AJAX toggle API — priority or donot
+if (isset($_GET['ajax_toggle'])) {
+    header('Content-Type: application/json');
+    $id = (int)($_GET['id'] ?? 0);
+    $field = $_GET['field'] ?? '';
+    if ($id <= 0 || !in_array($field, ['priority', 'donot'])) {
+        echo json_encode(['ok' => false, 'error' => 'Invalid params']);
+        exit;
+    }
+    // Read current value and flip it
+    $res = $conn->query("SELECT `{$field}` FROM domains WHERE id = {$id} LIMIT 1");
+    if (!$res || !($row = $res->fetch_assoc())) {
+        echo json_encode(['ok' => false, 'error' => 'Domain not found']);
+        exit;
+    }
+    $newVal = (int)$row[$field] ? 0 : 1;
+    $stmt = $conn->prepare("UPDATE domains SET `{$field}` = ? WHERE id = ? LIMIT 1");
+    $stmt->bind_param('ii', $newVal, $id);
+    $stmt->execute();
+    $stmt->close();
+    echo json_encode(['ok' => true, 'field' => $field, 'id' => $id, 'value' => $newVal]);
+    exit;
+}
+
 // Handle POST actions (Add/Update/Delete Domain)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     global $conn;
@@ -343,13 +367,25 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
                     <td><?= number_format($row['urls_crawled']) ?></td>
                     <td><?= number_format($row['emails_found']) ?></td>
                     <td>
-                        <span class="badge <?= $row['priority'] ? 'bg-warning text-dark' : 'bg-light text-muted' ?>">
+                        <span class="badge toggle-badge <?= $row['priority'] ? 'bg-warning text-dark' : 'bg-light text-muted' ?>"
+                              id="priority-<?= $row['id'] ?>"
+                              data-id="<?= $row['id'] ?>"
+                              data-field="priority"
+                              data-value="<?= $row['priority'] ?>"
+                              onclick="toggleField(this)"
+                              style="cursor:pointer;user-select:none;">
                             <?= $row['priority'] ? 'High' : 'Normal' ?>
                         </span>
                     </td>
                     <td>
-                        <span class="badge <?= $row['donot'] ? 'bg-danger' : 'bg-light text-muted' ?>">
-                            <?= $row['donot'] ? 'True' : 'False' ?>
+                        <span class="badge toggle-badge <?= $row['donot'] ? 'bg-danger' : 'bg-light text-muted' ?>"
+                              id="donot-<?= $row['id'] ?>"
+                              data-id="<?= $row['id'] ?>"
+                              data-field="donot"
+                              data-value="<?= $row['donot'] ?>"
+                              onclick="toggleField(this)"
+                              style="cursor:pointer;user-select:none;">
+                            <?= $row['donot'] ? 'Skip' : 'Crawl' ?>
                         </span>
                     </td>
                     <td class="text-center">
@@ -466,6 +502,56 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+function toggleField(el) {
+    var id = el.dataset.id;
+    var field = el.dataset.field;
+    var oldVal = parseInt(el.dataset.value);
+
+    // Immediate visual feedback
+    el.style.opacity = '0.5';
+    el.style.pointerEvents = 'none';
+
+    fetch('add_website.php?ajax_toggle=1&id=' + id + '&field=' + field, { cache: 'no-store' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            el.style.opacity = '1';
+            el.style.pointerEvents = '';
+            if (!data.ok) { alert('Error: ' + (data.error || 'Unknown')); return; }
+
+            var v = data.value;
+            el.dataset.value = v;
+
+            if (field === 'priority') {
+                el.textContent = v ? 'High' : 'Normal';
+                el.className = 'badge toggle-badge ' + (v ? 'bg-warning text-dark' : 'bg-light text-muted');
+            } else if (field === 'donot') {
+                el.textContent = v ? 'Skip' : 'Crawl';
+                el.className = 'badge toggle-badge ' + (v ? 'bg-danger' : 'bg-light text-muted');
+            }
+
+            // Brief flash to confirm save
+            el.style.transform = 'scale(1.2)';
+            setTimeout(function() { el.style.transform = ''; }, 200);
+        })
+        .catch(function(e) {
+            el.style.opacity = '1';
+            el.style.pointerEvents = '';
+            alert('Network error');
+        });
+}
+</script>
+<style>
+.toggle-badge {
+    transition: all 0.2s ease;
+    padding: 0.4em 0.75em;
+    font-size: 0.8rem;
+}
+.toggle-badge:hover {
+    transform: scale(1.1);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+</style>
 </body>
 </html>
 <?php ob_end_flush(); ?>
