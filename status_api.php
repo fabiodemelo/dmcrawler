@@ -81,16 +81,26 @@ try {
             $elapsed = max(0, $now - $startedTs);
         }
 
-        // If we have POSIX and PID isn't alive, mark stale lock as not running
+        // If we have POSIX and PID isn't alive, check if it's truly stale
+        // (only mark stale if the running file is older than 5 minutes with no PID activity)
+        $stale_pid = false;
         if ($running && $pid !== null && function_exists('posix_kill')) {
             if (!pid_is_alive($pid)) {
+                // PID is dead — but running file exists. Mark stale, not running.
+                $stale_pid = true;
                 $running = false;
             }
+        }
+        // If running file exists but is older than 2 hours, assume orphaned/stale
+        if ($running && $startedTs && ($now - $startedTs) > 7200) {
+            $stale_pid = true;
+            $running = false;
         }
 
         $status['tasks'][$key] = [
             'label' => $cfg['label'],
             'running' => $running,
+            'stale_pid' => $stale_pid,
             'started_at' => $startedTs ? date('Y-m-d H:i:s', $startedTs) : null,
             'elapsed_seconds' => $elapsed,
             'pid' => $pid,

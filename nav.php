@@ -29,6 +29,9 @@
                     <a class="nav-link <?= $current_page === 'metrics.php' ? 'active' : '' ?>" href="metrics.php"><i class="fas fa-chart-bar"></i>Metrics</a>
                 </li>
                 <li class="nav-item">
+                    <a class="nav-link <?= $current_page === 'live.php' ? 'active' : '' ?>" href="live.php"><i class="fas fa-satellite-dish"></i>Live</a>
+                </li>
+                <li class="nav-item">
                     <a class="nav-link <?= $current_page === 'settings.php' ? 'active' : '' ?>" href="settings.php"><i class="fas fa-cog"></i>Settings</a>
                 </li>
             </ul>

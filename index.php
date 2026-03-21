@@ -167,29 +167,32 @@ $acceptRate = ($totalEmailsFound + $totalRejected) > 0 ? round($totalEmailsFound
         <div class="col-lg-6">
             <div class="card">
                 <div class="card-body">
-                    <h3 class="mb-3">Process Status</h3>
-                    <p class="text-muted mb-3">Live status of background tasks. Updates every 5 seconds.</p>
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <h3 class="mb-0">Process Status</h3>
+                        <a href="live.php" class="btn btn-sm btn-outline-primary"><i class="fas fa-satellite-dish me-1"></i>Live View</a>
+                    </div>
+                    <p class="text-muted mb-3">Real-time background task monitoring. Auto-refreshes every 3s.</p>
                     <div class="d-flex flex-column gap-2" id="process-status-list">
-                        <div class="status-card">
-                            <span class="status-dot idle" id="dot-crawler"></span>
-                            <span class="status-name">Crawler</span>
-                            <span class="status-info" id="status-crawler">Loading...</span>
+                        <?php
+                        $procs = [
+                            ['key' => 'crawler', 'name' => 'Crawler', 'icon' => 'fa-spider', 'color' => '#2563eb'],
+                            ['key' => 'geturls', 'name' => 'Get URLs', 'icon' => 'fa-link', 'color' => '#0891b2'],
+                            ['key' => 'getemails', 'name' => 'Get Emails', 'icon' => 'fa-envelope-open-text', 'color' => '#d97706'],
+                            ['key' => 'addtomautic', 'name' => 'Mautic Sync', 'icon' => 'fa-share-square', 'color' => '#16a34a'],
+                        ];
+                        foreach ($procs as $p): ?>
+                        <div class="proc-card" id="proc-<?= $p['key'] ?>">
+                            <div class="proc-indicator" id="ind-<?= $p['key'] ?>">
+                                <div class="proc-spinner" id="spin-<?= $p['key'] ?>"></div>
+                                <i class="fas <?= $p['icon'] ?> proc-icon"></i>
+                            </div>
+                            <div class="proc-info">
+                                <div class="proc-name"><?= $p['name'] ?></div>
+                                <div class="proc-status" id="status-<?= $p['key'] ?>">Checking...</div>
+                            </div>
+                            <div class="proc-timer" id="timer-<?= $p['key'] ?>"></div>
                         </div>
-                        <div class="status-card">
-                            <span class="status-dot idle" id="dot-geturls"></span>
-                            <span class="status-name">Get URLs</span>
-                            <span class="status-info" id="status-geturls">Loading...</span>
-                        </div>
-                        <div class="status-card">
-                            <span class="status-dot idle" id="dot-getemails"></span>
-                            <span class="status-name">Get Emails</span>
-                            <span class="status-info" id="status-getemails">Loading...</span>
-                        </div>
-                        <div class="status-card">
-                            <span class="status-dot idle" id="dot-addtomautic"></span>
-                            <span class="status-name">Mautic Sync</span>
-                            <span class="status-info" id="status-addtomautic">Loading...</span>
-                        </div>
+                        <?php endforeach; ?>
                     </div>
                 </div>
             </div>
@@ -197,53 +200,161 @@ $acceptRate = ($totalEmailsFound + $totalRejected) > 0 ? round($totalEmailsFound
     </div>
 </div>
 
+<style>
+.proc-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0.85rem 1.1rem;
+    border-radius: var(--radius-sm);
+    border: 1.5px solid var(--border);
+    transition: all 0.3s ease;
+    background: var(--bg-card);
+}
+.proc-card.is-running {
+    border-color: var(--success);
+    background: linear-gradient(135deg, rgba(22,163,74,0.04), rgba(22,163,74,0.01));
+    box-shadow: 0 0 16px rgba(22,163,74,0.1);
+}
+.proc-indicator {
+    position: relative;
+    width: 42px;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--bg-body);
+    flex-shrink: 0;
+}
+.proc-card.is-running .proc-indicator {
+    background: rgba(22,163,74,0.1);
+}
+.proc-icon {
+    font-size: 1rem;
+    color: var(--text-muted);
+    z-index: 1;
+    transition: color 0.3s;
+}
+.proc-card.is-running .proc-icon {
+    color: var(--success);
+}
+.proc-spinner {
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    border: 2.5px solid transparent;
+    border-top-color: var(--success);
+    border-right-color: var(--success);
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+.proc-card.is-running .proc-spinner {
+    opacity: 1;
+    animation: proc-spin 1.2s linear infinite;
+}
+@keyframes proc-spin {
+    to { transform: rotate(360deg); }
+}
+.proc-info {
+    flex: 1;
+    min-width: 0;
+}
+.proc-name {
+    font-weight: 700;
+    font-size: 0.95rem;
+    line-height: 1.2;
+}
+.proc-status {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 1px;
+}
+.proc-card.is-running .proc-status {
+    color: var(--success);
+    font-weight: 600;
+}
+.proc-timer {
+    font-family: ui-monospace, 'Menlo', 'Consolas', monospace;
+    font-size: 1.15rem;
+    font-weight: 800;
+    color: var(--text-muted);
+    letter-spacing: -0.5px;
+    min-width: 65px;
+    text-align: right;
+}
+.proc-card.is-running .proc-timer {
+    color: var(--success);
+}
+</style>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-function fmtElapsed(s) {
+var _procTimers = {};
+var _procIntervals = {};
+
+function fmtTimer(s) {
     if (!s && s !== 0) return '';
-    s = parseInt(s, 10);
-    if (isNaN(s) || s < 0) return '';
-    if (s < 60) return s + 's';
-    var m = Math.floor(s / 60), ss = s % 60;
-    if (m < 60) return m + 'm ' + ss + 's';
-    return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+    s = Math.max(0, Math.floor(s));
+    var h = Math.floor(s / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    var sec = s % 60;
+    var pad = function(n) { return n < 10 ? '0' + n : '' + n; };
+    if (h > 0) return h + ':' + pad(m) + ':' + pad(sec);
+    return pad(m) + ':' + pad(sec);
 }
 
-function setStatus(name, task) {
-    var el = document.getElementById('status-' + name);
-    var dot = document.getElementById('dot-' + name);
-    if (!el || !dot) return;
-    dot.className = 'status-dot idle';
+function setProc(name, task) {
+    var card = document.getElementById('proc-' + name);
+    var status = document.getElementById('status-' + name);
+    var timer = document.getElementById('timer-' + name);
+    if (!card || !status || !timer) return;
 
-    if (!task) { el.textContent = 'Unknown'; return; }
+    // Clear any existing live timer
+    if (_procIntervals[name]) { clearInterval(_procIntervals[name]); _procIntervals[name] = null; }
+
+    if (!task) {
+        card.classList.remove('is-running');
+        status.textContent = 'Unknown';
+        timer.textContent = '';
+        return;
+    }
 
     if (task.running) {
-        var elapsed = fmtElapsed(task.elapsed_seconds);
-        el.innerHTML = 'Running' + (elapsed ? ' <strong>' + elapsed + '</strong>' : '');
-        dot.className = 'status-dot running';
+        card.classList.add('is-running');
+        status.textContent = 'Running';
+        _procTimers[name] = task.elapsed_seconds || 0;
+        timer.textContent = fmtTimer(_procTimers[name]);
+        // Start a live 1s counter so the timer ticks between polls
+        _procIntervals[name] = setInterval(function() {
+            _procTimers[name]++;
+            timer.textContent = fmtTimer(_procTimers[name]);
+        }, 1000);
     } else if (task.stale_pid) {
-        el.textContent = 'Stale';
-        dot.className = 'status-dot stale';
+        card.classList.remove('is-running');
+        status.innerHTML = '<span style="color:var(--warning)">Stale Process</span>';
+        timer.textContent = '';
     } else {
-        el.textContent = 'Idle';
+        card.classList.remove('is-running');
+        status.textContent = 'Idle';
+        timer.textContent = '';
     }
 }
 
 function updateStatus() {
     fetch('status_api.php', { cache: 'no-store' })
-        .then(r => r.json())
-        .then(data => {
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
             if (!data || !data.ok) return;
             var t = data.tasks || {};
-            setStatus('crawler', t.crawler);
-            setStatus('geturls', t.geturls);
-            setStatus('getemails', t.getemails);
-            setStatus('addtomautic', t.addtomautic);
+            setProc('crawler', t.crawler);
+            setProc('geturls', t.geturls);
+            setProc('getemails', t.getemails);
+            setProc('addtomautic', t.addtomautic);
         })
-        .catch(e => console.error('Status error:', e));
+        .catch(function(e) { console.error('Status error:', e); });
 }
 updateStatus();
-setInterval(updateStatus, 5000);
+setInterval(updateStatus, 3000);
 </script>
 </body>
 </html>
