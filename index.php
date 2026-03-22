@@ -358,7 +358,7 @@ $acceptRate = ($totalEmailsFound + $totalRejected) > 0 ? round($totalEmailsFound
     color: var(--success);
 }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script data-cfasync="false" src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script>
 var _procTimers = {};
 var _procIntervals = {};

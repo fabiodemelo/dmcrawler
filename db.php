@@ -24,4 +24,3 @@ $_includes_path = __DIR__ . '/includes/functions.php';
 if (file_exists($_includes_path)) {
     require_once $_includes_path;
 }
-?>

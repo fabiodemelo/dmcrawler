@@ -1,33 +1,70 @@
 <?php
-// PHP error reporting for debugging 500 errors
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-
-// AJAX toggle API — priority or donot (handled early, before output buffering)
+// AJAX toggle API — completely self-contained, no includes that could output anything
 if (isset($_GET['ajax_toggle'])) {
-    include 'auth_check.php';
-    include 'db.php';
-    header('Content-Type: application/json');
+    @error_reporting(0);
+    @ini_set('display_errors', '0');
+    @ob_start();
+    @session_start();
+
+    // Auth check inline
+    if (empty($_SESSION['loggedin'])) {
+        @ob_end_clean();
+        header('Content-Type: application/json');
+        die(json_encode(['ok' => false, 'error' => 'Not authenticated']));
+    }
+
+    // Direct DB connection (no include to avoid output leaks)
+    $_envFile = __DIR__ . '/.env';
+    $_dbHost = 'localhost'; $_dbName = 'demelos'; $_dbUser = 'fabio'; $_dbPass = '';
+    if (file_exists($_envFile)) {
+        foreach (file($_envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $_l) {
+            if (strpos(trim($_l), '#') === 0) continue;
+            if (strpos($_l, '=') !== false) {
+                [$_k, $_v] = explode('=', $_l, 2);
+                $_k = trim($_k); $_v = trim($_v);
+                if ($_k === 'DB_HOST') $_dbHost = $_v;
+                elseif ($_k === 'DB_NAME') $_dbName = $_v;
+                elseif ($_k === 'DB_USER') $_dbUser = $_v;
+                elseif ($_k === 'DB_PASS') $_dbPass = $_v;
+            }
+        }
+    }
+    $conn = @new mysqli($_dbHost, $_dbUser, $_dbPass, $_dbName);
+    if ($conn->connect_error) {
+        @ob_end_clean();
+        header('Content-Type: application/json');
+        die(json_encode(['ok' => false, 'error' => 'DB connection failed']));
+    }
+
     $id = (int)($_GET['id'] ?? 0);
     $field = $_GET['field'] ?? '';
+
+    @ob_end_clean();
+    header('Content-Type: application/json');
+
     if ($id <= 0 || !in_array($field, ['priority', 'donot'])) {
-        echo json_encode(['ok' => false, 'error' => 'Invalid params']);
-        exit;
+        die(json_encode(['ok' => false, 'error' => 'Invalid params']));
     }
+
     $res = $conn->query("SELECT `{$field}` FROM domains WHERE id = {$id} LIMIT 1");
     if (!$res || !($row = $res->fetch_assoc())) {
-        echo json_encode(['ok' => false, 'error' => 'Domain not found']);
-        exit;
+        die(json_encode(['ok' => false, 'error' => 'Domain not found']));
     }
+
     $newVal = (int)$row[$field] ? 0 : 1;
     $stmt = $conn->prepare("UPDATE domains SET `{$field}` = ? WHERE id = ? LIMIT 1");
     $stmt->bind_param('ii', $newVal, $id);
     $stmt->execute();
     $stmt->close();
-    echo json_encode(['ok' => true, 'field' => $field, 'id' => $id, 'value' => $newVal]);
-    exit;
+    $conn->close();
+
+    die(json_encode(['ok' => true, 'field' => $field, 'id' => $id, 'value' => $newVal]));
 }
+
+// PHP error reporting for debugging 500 errors
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
 
 ob_start(); // Start output buffering to prevent "headers already sent" errors
 
@@ -498,7 +535,7 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
     <?php endif; ?>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script data-cfasync="false" src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script data-cfasync="false">
 document.addEventListener('click', function(e) {
     var el = e.target.closest('.js-toggle');
