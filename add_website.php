@@ -236,8 +236,8 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
 
     // Pagination setup
     $records_per_page = 50;
-    $current_page = isset($_GET['p']) ? max(1, (int)$_GET['p']) : 1;
-    $offset = ($current_page - 1) * $records_per_page;
+    $current_page = (int)(isset($_GET['p']) ? max(1, (int)$_GET['p']) : 1);
+    $offset = (int)(($current_page - 1) * $records_per_page);
 
     // Sorting setup
     $orderBy = $_GET['orderBy'] ?? 'date_added';
@@ -286,7 +286,7 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
         error_log("Error counting records for pagination: " . $conn->error . " SQL: " . $count_sql);
     }
 
-    $total_pages = ceil($total_records / $records_per_page);
+    $total_pages = (int)ceil($total_records / $records_per_page);
 
     // Fetch domains for display with filter, sorting, and pagination
     $domains = [];
