@@ -511,12 +511,12 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
                 <a class="page-link" href="?p=1&status=<?= urlencode($filterStatus) ?>&search=<?= urlencode($search) ?>&orderBy=<?= urlencode($orderBy) ?>&orderDir=<?= urlencode($orderDir) ?>">First</a>
             </li>
             <li class="page-item <?= ($current_page <= 1) ? 'disabled' : '' ?>">
-                <a class="page-link" href="?p=<?= $current_page - 1 ?>&status=<?= urlencode($filterStatus) ?>&search=<?= urlencode($search) ?>&orderBy=<?= urlencode($orderBy) ?>&orderDir=<?= urlencode($orderDir) ?>">Prev</a>
+                <a class="page-link" href="?p=<?= intval($current_page) - 1 ?>&status=<?= urlencode($filterStatus) ?>&search=<?= urlencode($search) ?>&orderBy=<?= urlencode($orderBy) ?>&orderDir=<?= urlencode($orderDir) ?>">Prev</a>
             </li>
             
             <?php
-            $start = max(1, $current_page - 2);
-            $end = min($total_pages, $current_page + 2);
+            $start = max(1, intval($current_page) - 2);
+            $end = min(intval($total_pages), intval($current_page) + 2);
             for ($i = $start; $i <= $end; $i++):
             ?>
             <li class="page-item <?= ($i == $current_page) ? 'active' : '' ?>">
@@ -525,7 +525,7 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
             <?php endfor; ?>
 
             <li class="page-item <?= ($current_page >= $total_pages) ? 'disabled' : '' ?>">
-                <a class="page-link" href="?p=<?= $current_page + 1 ?>&status=<?= urlencode($filterStatus) ?>&search=<?= urlencode($search) ?>&orderBy=<?= urlencode($orderBy) ?>&orderDir=<?= urlencode($orderDir) ?>">Next</a>
+                <a class="page-link" href="?p=<?= intval($current_page) + 1 ?>&status=<?= urlencode($filterStatus) ?>&search=<?= urlencode($search) ?>&orderBy=<?= urlencode($orderBy) ?>&orderDir=<?= urlencode($orderDir) ?>">Next</a>
             </li>
             <li class="page-item <?= ($current_page >= $total_pages) ? 'disabled' : '' ?>">
                 <a class="page-link" href="?p=<?= $total_pages ?>&status=<?= urlencode($filterStatus) ?>&search=<?= urlencode($search) ?>&orderBy=<?= urlencode($orderBy) ?>&orderDir=<?= urlencode($orderDir) ?>">Last</a>
