@@ -1,4 +1,5 @@
 .env
+deploy.sh
 crawler.log
 crawler.lock
 crawler.running
