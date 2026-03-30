@@ -2,6 +2,8 @@
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
+include __DIR__ . '/db.php';
+
 $base_dir = __DIR__ . '/';
 
 function safe_read_started_at($filePath) {

@@ -134,6 +134,82 @@ if (!function_exists('update_domain_progress')) {
 }
 
 /**
+ * Strict email gatekeeper — single source of truth for email validity.
+ * Used by crawler (before DB insert) AND Mautic sync (before API call).
+ * Returns ['valid' => bool, 'reason' => string|null]
+ */
+if (!function_exists('is_clean_email')) {
+    function is_clean_email(string $email): array {
+        $email = trim(strtolower($email));
+
+        // 1. Length check
+        if (strlen($email) < 6 || strlen($email) > 60) {
+            return ['valid' => false, 'reason' => 'Bad length (' . strlen($email) . ' chars)'];
+        }
+
+        // 2. Must match strict format: alphanumeric/dot/hyphen/underscore @ alphanumeric/dot/hyphen . alpha TLD (2-10)
+        if (!preg_match('/^[a-z0-9][a-z0-9._\-]*[a-z0-9]@[a-z0-9][a-z0-9.\-]*[a-z0-9]\.[a-z]{2,10}$/', $email)) {
+            return ['valid' => false, 'reason' => 'Failed strict format check'];
+        }
+
+        // 3. PHP filter_var as secondary check
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return ['valid' => false, 'reason' => 'Failed filter_var'];
+        }
+
+        // 4. No URL-encoded chars
+        if (preg_match('/%[0-9a-f]{2}/i', $email)) {
+            return ['valid' => false, 'reason' => 'Contains URL-encoded characters'];
+        }
+
+        // 5. No consecutive dots, leading/trailing dots in username or domain
+        $parts = explode('@', $email);
+        if (count($parts) !== 2) {
+            return ['valid' => false, 'reason' => 'Missing @ separator'];
+        }
+        $username = $parts[0];
+        $domain = $parts[1];
+
+        if (strpos($username, '..') !== false || strpos($domain, '..') !== false) {
+            return ['valid' => false, 'reason' => 'Consecutive dots'];
+        }
+
+        // 6. Domain must have at least one dot and a proper TLD
+        $domainParts = explode('.', $domain);
+        if (count($domainParts) < 2) {
+            return ['valid' => false, 'reason' => 'Domain has no TLD'];
+        }
+        $tld = end($domainParts);
+        if (strlen($tld) < 2 || !ctype_alpha($tld)) {
+            return ['valid' => false, 'reason' => "Bad TLD: .$tld"];
+        }
+
+        // 7. Domain part before TLD must be at least 2 chars
+        $domainName = implode('.', array_slice($domainParts, 0, -1));
+        if (strlen($domainName) < 2) {
+            return ['valid' => false, 'reason' => "Domain too short: $domainName"];
+        }
+
+        // 8. Username must be at least 2 chars
+        if (strlen($username) < 2) {
+            return ['valid' => false, 'reason' => 'Username too short'];
+        }
+
+        // 9. Reject emails that look like filenames
+        if (preg_match('/\.(jpg|jpeg|png|gif|pdf|zip|css|js|svg|mp4|doc|xls)$/i', $email)) {
+            return ['valid' => false, 'reason' => 'Looks like a filename'];
+        }
+
+        // 10. Reject obvious nonsense: all same char, keyboard mash patterns
+        if (preg_match('/^(.)\1{3,}@/', $email)) {
+            return ['valid' => false, 'reason' => 'Repeated characters'];
+        }
+
+        return ['valid' => true, 'reason' => null];
+    }
+}
+
+/**
  * Check if a column exists in a table.
  */
 if (!function_exists('column_exists')) {

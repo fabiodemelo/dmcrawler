@@ -358,7 +358,9 @@ function crawl_page(string $url, string $domain, array &$visited, int &$email_co
     $crawl_state['consecutive_low_pages'] = 0;
 
     // === STAGE 4: Extraction ===
-    preg_match_all('/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/', $decoded_html, $matches);
+    // Strict regex: username allows letters, digits, dots, hyphens, underscores only
+    // No % or + (which capture URL-encoded junk like +%bg@s.di)
+    preg_match_all('/[a-zA-Z0-9._\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/', $decoded_html, $matches);
     $raw_emails = array_unique($matches[0]);
 
     $page_extracted = 0;
@@ -368,11 +370,14 @@ function crawl_page(string $url, string $domain, array &$visited, int &$email_co
     global $conn;
     foreach ($raw_emails as $raw_email) {
         $email = trim(strtolower($raw_email));
-        // Remove leading/trailing dots and spaces
         $email = trim($email, '. ');
-        // Skip obviously bad
-        if (strlen($email) < 5 || strlen($email) > 60) continue;
-        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) continue;
+
+        // === GATEKEEPER: strict format check (single source of truth) ===
+        $gate = is_clean_email($email);
+        if (!$gate['valid']) {
+            log_activity("GATE REJECT: $email — {$gate['reason']}");
+            continue;
+        }
 
         $page_extracted++;
         $crawl_state['total_extracted']++;

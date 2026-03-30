@@ -47,8 +47,8 @@ if (!function_exists('get_setting_value')) {
 }
 
 // Map variables to settings columns as requested
-$EMAIL_TO            = (string) (get_setting_value('email_from')        ?? ''); // $EMAIL_TO -> email_from
-$EMAIL_FROM          = (string) (get_setting_value('email_to')          ?? ''); // $EMAIL_FROM -> email_to
+$EMAIL_TO            = (string) (get_setting_value('email_to')          ?? '');
+$EMAIL_FROM          = (string) (get_setting_value('email_from')        ?? '');
 $MAUTIC_BASE_URL     = (string) (get_setting_value('mautic_api_url')    ?? '');
 $MAUTIC_USERNAME     = (string) (get_setting_value('mautic_api_username') ?? '');
 $MAUTIC_PASSWORD     = (string) (get_setting_value('mautic_password')   ?? '');
@@ -60,7 +60,6 @@ $BATCH_LIMIT         = (int) (get_setting_value('mautic_batch_limit') ?? '');
 $limit_max           = (int) (get_setting_value('mautic_limit_max') ?? '');
 $SLEEP_BETWEEN       = (int) (get_setting_value('mautic_between') ?? '');
 
-require_once __DIR__ . '/db.php';
 // ================== DB (PDO wrapper using credentials from db.php) ==================
 function db(): PDO
 {
@@ -294,6 +293,12 @@ function mautic_form_submit(string $postUrl, int $formId, string $formAlias, arr
 $ENABLE_EMAIL_ADDTOMAUTIC_SUCCESS = (int)(get_setting_value('enable_email_addtomautic_success') ?? 1);
 $ENABLE_EMAIL_ADDTOMAUTIC_ERROR = (int)(get_setting_value('enable_email_addtomautic_error') ?? 1);
 
+// --- Circuit Breaker Settings ---
+$CIRCUIT_BREAKER_THRESHOLD = 5;   // Consecutive API failures before halting
+$consecutiveApiFailures = 0;       // Counter
+$circuitBroken = false;            // Flag
+$permanentlyFailed = 0;            // Emails marked as permanently failed
+
 say("Starting Mautic import… Mode=" . MAUTIC_MODE);
 
 try {
@@ -315,10 +320,20 @@ foreach ($rows as $row) {
     $email = trim((string)$row['email']);
     $name = $row['name'] ?? null;
 
-    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    // === GATEKEEPER: strict format check (same function used by crawler) ===
+    $gate = is_clean_email($email);
+    if (!$gate['valid']) {
         $skipCount++;
-        say("Skip ID $id: invalid email '$email'.");
+        $permanentlyFailed++;
+        say("GATE REJECT ID $id: '$email' — {$gate['reason']}");
+        // Mark ma = -1 (permanently invalid format) so it never retries
+        try { db()->prepare("UPDATE emails SET ma = -1 WHERE id = :id")->execute([':id' => $id]); } catch (Throwable $ignore) {}
         continue;
+    }
+
+    // === CIRCUIT BREAKER: stop hammering Mautic if something is systematically wrong ===
+    if ($circuitBroken) {
+        break;
     }
 
     try {
@@ -336,27 +351,50 @@ foreach ($rows as $row) {
 
         } elseif (MAUTIC_MODE === 'form') {
             global $MAUTIC_FORM_POST_URL, $MAUTIC_FORM_ID, $MAUTIC_FORM_NAME, $MAUTIC_FORM_FIELD_MAP;
-            // Submit to form which has an action "Add to Segment"
             $ok = mautic_form_submit($MAUTIC_FORM_POST_URL, (int)$MAUTIC_FORM_ID, $MAUTIC_FORM_NAME, $MAUTIC_FORM_FIELD_MAP, $row);
         }
-        // If we reached here without exception, mark as done
+
+        // Success — mark done and reset circuit breaker counter
         mark_email_done($id);
         $successCount++;
+        $consecutiveApiFailures = 0;
         usleep($SLEEP_BETWEEN);
 
-        if ($successCount >= $limit_max) {
-            say("Reached limit_max={$limit_max}. Stopping further processing.");
-            break;
+    } catch (Throwable $e) {
+        $errMsg = $e->getMessage();
+        err("ID $id failed: " . $errMsg);
+        $consecutiveApiFailures++;
+
+        // Determine if this is a permanent failure (bad data) vs transient (network/server)
+        $isPermanent = (
+            strpos($errMsg, 'HTTP 400') !== false ||  // Bad request = bad email data
+            strpos($errMsg, 'HTTP 422') !== false ||  // Unprocessable entity
+            strpos($errMsg, 'characters not allowed') !== false
+        );
+
+        if ($isPermanent) {
+            // Mark ma = -2 (permanently rejected by Mautic) — never retry this email
+            try { db()->prepare("UPDATE emails SET ma = -2 WHERE id = :id")->execute([':id' => $id]); } catch (Throwable $ignore) {}
+            $permanentlyFailed++;
+            say("  -> Permanently failed (bad data). Marked ma=-2, will not retry.");
+            // Don't count permanent failures toward circuit breaker (it's the data, not Mautic)
+            $consecutiveApiFailures = max(0, $consecutiveApiFailures - 1);
         }
 
-    } catch (Throwable $e) {
-        err("ID $id failed: " . $e->getMessage());
-        // do not mark as done; will retry next run
+        // Circuit breaker: too many consecutive failures = Mautic is likely down or misconfigured
+        if ($consecutiveApiFailures >= $CIRCUIT_BREAKER_THRESHOLD) {
+            $circuitBroken = true;
+            err("CIRCUIT BREAKER: {$consecutiveApiFailures} consecutive API failures. Halting to prevent further damage.");
+            err("Check Mautic connectivity, credentials, and API status before re-running.");
+        }
+
         continue;
     }
 }
 
-say("Completed. Success=$successCount, Skipped=$skipCount, Errors=" . count($errors) . ".");
+// Build completion summary
+$haltedMsg = $circuitBroken ? ' ** HALTED BY CIRCUIT BREAKER **' : '';
+say("Completed.{$haltedMsg} Success=$successCount, Skipped=$skipCount, PermanentlyFailed=$permanentlyFailed, Errors=" . count($errors) . ".");
 if (!empty($errors)) {
     say("Some items failed; see above error messages.");
 }
@@ -366,20 +404,36 @@ $EMAIL_TO = get_setting_value('email_to') ?? 'admin@example.com';
 $EMAIL_FROM = get_setting_value('email_from') ?? 'no-reply@example.com';
 $EMAIL_SUBJ_PREFIX = get_setting_value('email_subj_prefix') ?? 'Mautic Sync Report';
 
-$subjectSuffix = (count($errors) > 0 ? 'Completed with Errors' : 'Success');
+if ($circuitBroken) {
+    $subjectSuffix = 'HALTED — Circuit Breaker Triggered';
+} elseif (count($errors) > 0) {
+    $subjectSuffix = 'Completed with Errors';
+} else {
+    $subjectSuffix = 'Success';
+}
 $subject = $EMAIL_SUBJ_PREFIX . ' - ' . $subjectSuffix . " (" . date('Y-m-d') . ")";
 
 $bodyLines = [];
 $bodyLines[] = "Mautic Sync Summary (" . date('Y-m-d H:i:s') . ")";
 $bodyLines[] = "------------------------------------";
-$bodyLines[] = "Total emails processed: " . (count($rows));
+if ($circuitBroken) {
+    $bodyLines[] = "!! CIRCUIT BREAKER TRIGGERED !!";
+    $bodyLines[] = "The sync was halted after {$CIRCUIT_BREAKER_THRESHOLD} consecutive API failures.";
+    $bodyLines[] = "Action required: Check Mautic connectivity, credentials, and API status.";
+    $bodyLines[] = "------------------------------------";
+}
+$bodyLines[] = "Total emails in batch: " . (count($rows));
 $bodyLines[] = "Successfully synced: " . $successCount;
 $bodyLines[] = "Skipped (invalid format): " . $skipCount;
-$bodyLines[] = "Errors: " . count($errors);
+$bodyLines[] = "Permanently failed (bad data, won't retry): " . $permanentlyFailed;
+$bodyLines[] = "API errors: " . count($errors);
 if (!empty($errors)) {
-    $bodyLines[] = "\nDetails of Errors:";
-    foreach ($errors as $e) {
+    $bodyLines[] = "\nError Details (last " . min(count($errors), 10) . "):";
+    foreach (array_slice($errors, -10) as $e) {
         $bodyLines[] = "- " . $e;
+    }
+    if (count($errors) > 10) {
+        $bodyLines[] = "... and " . (count($errors) - 10) . " more errors.";
     }
 }
 $bodyLines[] = "\nFull log available in application dashboard.";
@@ -391,12 +445,17 @@ $headers[] = "MIME-Version: 1.0";
 $headers[] = "Content-Type: text/plain; charset=UTF-8";
 
 // Check notification settings before sending
+// Circuit breaker alerts ALWAYS send regardless of notification preferences
 $shouldSendEmail = false;
 if (!empty($EMAIL_TO)) {
-    if (count($errors) > 0 && $ENABLE_EMAIL_ADDTOMAUTIC_ERROR === 1) {
-        $shouldSendEmail = true; // Send error email if errors occurred and enabled
+    if ($circuitBroken) {
+        $shouldSendEmail = true; // Always alert on circuit breaker
+    } elseif ($permanentlyFailed > 0 && $ENABLE_EMAIL_ADDTOMAUTIC_ERROR === 1) {
+        $shouldSendEmail = true; // Alert on permanent failures
+    } elseif (count($errors) > 0 && $ENABLE_EMAIL_ADDTOMAUTIC_ERROR === 1) {
+        $shouldSendEmail = true;
     } elseif (count($errors) === 0 && $ENABLE_EMAIL_ADDTOMAUTIC_SUCCESS === 1) {
-        $shouldSendEmail = true; // Send success email if no errors occurred and enabled
+        $shouldSendEmail = true;
     }
 } else {
     err("Email not sent: Recipient address (email_to) is not configured in settings.");
