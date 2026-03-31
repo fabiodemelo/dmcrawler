@@ -990,19 +990,9 @@ if (is_file($outCsv)) {
     $bodyLines[] = "CSV not saved (check errors above).";
 }
 
-// Send summary email if a recipient is configured AND notifications are enabled
-$shouldSendEmail = false;
-if (!empty($EMAIL_TO)) {
-    if (!empty($errors) && $ENABLE_EMAIL_GETURLS_ERROR === 1) {
-        $shouldSendEmail = true; // Send email if there are errors and error notifications are enabled
-    } elseif (empty($errors) && $ENABLE_EMAIL_GETURLS_SUCCESS === 1) {
-        $shouldSendEmail = true; // Send email if no errors and success notifications are enabled
-    }
-} else {
-    report_error("Email not sent: Recipient address (email_to) is not configured in settings.");
-}
-
-if ($shouldSendEmail) {
+// Per-run success emails disabled — use daily_crawler_report.php for consolidated daily summaries.
+// Only send immediate email for error runs that need attention.
+if (!empty($errors) && !empty($EMAIL_TO) && $ENABLE_EMAIL_GETURLS_ERROR === 1) {
     @mail($EMAIL_TO, $subject, implode("\n", $bodyLines), implode("\r\n", $headers));
 }
 

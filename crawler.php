@@ -763,38 +763,20 @@ if ($row = $res->fetch_assoc()) {
 release_lock($__lock);
 end_streaming_ui();
 
-// --- Summary Email ---
-$summary_subject_suffix = empty($crawler_errors) ? 'Success' : 'Completed with Errors';
-$summary_subject = $EMAIL_SUBJ_PREFIX . ' - Crawler (Domains: ' . $domains_processed_count . ') - ' . $summary_subject_suffix;
-
-$summary_body = [];
-$summary_body[] = "Crawler Run Summary (" . date('Y-m-d H:i:s') . ")";
-$summary_body[] = "------------------------------------------";
-$summary_body[] = "Domains Processed: " . $domains_processed_count;
-$summary_body[] = "Total Emails Found: " . $total_emails_found_in_run;
-if (isset($crawl_state)) {
-    $summary_body[] = "Emails Rejected: " . $crawl_state['total_rejected'];
-    $summary_body[] = "Catalog/Pattern Rejected: " . ($crawl_state['catalog_rejected'] ?? 0);
-    if ($crawl_state['stop_reason']) {
-        $summary_body[] = "Stop Reason: " . $crawl_state['stop_reason'];
-    }
-}
-$summary_body[] = "Errors: " . (empty($crawler_errors) ? 'None' : count($crawler_errors));
-if (!empty($crawler_errors)) {
+// Per-run emails disabled — use daily_crawler_report.php for consolidated daily summaries.
+// Only send immediate email for critical errors that need urgent attention.
+if (!empty($crawler_errors) && !empty($EMAIL_TO) && $ENABLE_EMAIL_CRAWLER_ERROR === 1) {
+    $summary_subject = $EMAIL_SUBJ_PREFIX . ' - Crawler ERROR (Domains: ' . $domains_processed_count . ')';
+    $summary_body = [];
+    $summary_body[] = "Crawler Error Alert (" . date('Y-m-d H:i:s') . ")";
+    $summary_body[] = "------------------------------------------";
+    $summary_body[] = "Domains Processed: " . $domains_processed_count;
+    $summary_body[] = "Errors: " . count($crawler_errors);
     $summary_body[] = "\n--- Errors ---";
-    foreach ($crawler_errors as $err) $summary_body[] = "- " . $err;
-}
-$summary_body[] = "------------------------------------------";
-
-$summary_message = implode("\n", $summary_body);
-$headers = 'From: ' . $EMAIL_FROM . "\r\n" . 'Reply-To: ' . $EMAIL_FROM . "\r\n" . 'X-Mailer: PHP/' . phpversion();
-
-if (!empty($EMAIL_TO)) {
-    if (empty($crawler_errors) && $ENABLE_EMAIL_CRAWLER_SUCCESS === 1) {
-        @mail($EMAIL_TO, $summary_subject, $summary_message, $headers);
-    } elseif (!empty($crawler_errors) && $ENABLE_EMAIL_CRAWLER_ERROR === 1) {
-        @mail($EMAIL_TO, $summary_subject, $summary_message, $headers);
-    }
+    foreach (array_slice($crawler_errors, -10) as $err) $summary_body[] = "- " . $err;
+    if (count($crawler_errors) > 10) $summary_body[] = "... and " . (count($crawler_errors) - 10) . " more.";
+    $headers = 'From: ' . $EMAIL_FROM . "\r\n" . 'Reply-To: ' . $EMAIL_FROM . "\r\n" . 'X-Mailer: PHP/' . phpversion();
+    @mail($EMAIL_TO, $summary_subject, implode("\n", $summary_body), $headers);
 }
 
 exit(0);

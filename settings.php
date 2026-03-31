@@ -222,7 +222,25 @@ $hasPhase2 = $_p2res && $_p2res->num_rows > 0;
                             </div>
                         </div>
 
-                        <h4 class="mb-3">Per-Script Notifications</h4>
+                        <h4 class="mb-3">Daily Report</h4>
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <div class="card" style="border-left:4px solid var(--primary);">
+                                    <div class="card-body py-3 d-flex align-items-center justify-content-between">
+                                        <div>
+                                            <h4 class="mb-1"><i class="fas fa-calendar-day me-2" style="color:var(--primary);"></i>Daily Summary Email</h4>
+                                            <p class="text-muted mb-0">One consolidated report per day with all crawl activity, emails found, and stats.</p>
+                                        </div>
+                                        <div class="form-check form-switch" style="font-size:1.25rem;">
+                                            <input class="form-check-input" type="checkbox" id="enable_daily_report" name="enable_daily_report" value="1" <?= (isset($settings['enable_daily_report']) ? (int)$settings['enable_daily_report'] : 1) === 1 ? 'checked' : '' ?>>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <h4 class="mb-3">Per-Script Error Alerts</h4>
+                        <p class="text-muted mb-3">These only send when errors occur — success notifications use the daily report above.</p>
                         <div class="row g-3">
                             <?php
                             $scripts = [

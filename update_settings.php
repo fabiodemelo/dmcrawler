@@ -28,6 +28,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'max_pages' => (int)($_POST['max_pages'] ?? 20),
         'over_fetch_factor' => (int)($_POST['over_fetch_factor'] ?? 5),
         'out_dir' => $_POST['out_dir'] ?? 'output',
+        // Daily report toggle (auto-add column if missing)
+        'enable_daily_report' => isset($_POST['enable_daily_report']) ? 1 : 0,
         // Notification checkboxes
         'enable_email_add_website_success' => isset($_POST['enable_email_add_website_success']) ? 1 : 0,
         'enable_email_add_website_error' => isset($_POST['enable_email_add_website_error']) ? 1 : 0,
@@ -38,6 +40,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'enable_email_crawler_success' => isset($_POST['enable_email_crawler_success']) ? 1 : 0,
         'enable_email_crawler_error' => isset($_POST['enable_email_crawler_error']) ? 1 : 0,
     ];
+
+    // Auto-add enable_daily_report column if missing
+    $_drRes = @$conn->query("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'settings' AND COLUMN_NAME = 'enable_daily_report'");
+    if (!$_drRes || $_drRes->num_rows === 0) {
+        @$conn->query("ALTER TABLE settings ADD COLUMN `enable_daily_report` TINYINT(1) NOT NULL DEFAULT 1");
+    }
 
     // Phase 2 Intelligence fields (only if columns exist)
     $_p2res = @$conn->query("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'settings' AND COLUMN_NAME = 'page_quality_threshold'");

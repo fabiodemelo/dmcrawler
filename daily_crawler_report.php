@@ -15,8 +15,16 @@ require_once __DIR__ . '/db.php';
 
 date_default_timezone_set('America/Los_Angeles'); // change if needed
 
-$TO   = 'fabio@demelos.com';
-$FROM = 'no-reply@demelos.com';
+// Read email settings from database (fallback to defaults)
+$TO   = get_setting_value('email_to') ?? 'fabio@demelos.com';
+$FROM = get_setting_value('email_from') ?? 'no-reply@demelos.com';
+
+// Check if daily report is enabled (default: enabled)
+$enableDailyReport = (int)(get_setting_value('enable_daily_report') ?? 1);
+if (!$enableDailyReport) {
+    if (php_sapi_name() === 'cli') echo "Daily report is disabled in settings. Exiting.\n";
+    exit(0);
+}
 
 $MAX_DOMAINS_TABLE_ROWS = 250; // prevent massive emails
 $MAX_EMAILS_TABLE_ROWS  = 500;

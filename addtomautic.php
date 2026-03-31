@@ -444,19 +444,16 @@ $headers[] = "From: {$EMAIL_FROM}";
 $headers[] = "MIME-Version: 1.0";
 $headers[] = "Content-Type: text/plain; charset=UTF-8";
 
-// Check notification settings before sending
-// Skip notification entirely if nothing happened (empty batch)
-// Circuit breaker alerts ALWAYS send regardless of notification preferences
+// Per-run success emails disabled — use daily_crawler_report.php for consolidated daily summaries.
+// Only send immediate email for circuit breaker and errors.
 $shouldSendEmail = false;
 $batchHadWork = count($rows) > 0;
 if (!empty($EMAIL_TO) && $batchHadWork) {
     if ($circuitBroken) {
         $shouldSendEmail = true; // Always alert on circuit breaker
     } elseif ($permanentlyFailed > 0 && $ENABLE_EMAIL_ADDTOMAUTIC_ERROR === 1) {
-        $shouldSendEmail = true; // Alert on permanent failures
-    } elseif (count($errors) > 0 && $ENABLE_EMAIL_ADDTOMAUTIC_ERROR === 1) {
         $shouldSendEmail = true;
-    } elseif (count($errors) === 0 && $ENABLE_EMAIL_ADDTOMAUTIC_SUCCESS === 1) {
+    } elseif (count($errors) > 0 && $ENABLE_EMAIL_ADDTOMAUTIC_ERROR === 1) {
         $shouldSendEmail = true;
     }
 }
