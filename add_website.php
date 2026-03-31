@@ -228,10 +228,11 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
 }
 
     global $conn;
-    // Handle filtering by status
-    $filterStatus = $_GET['status'] ?? 'pending'; // Default to 'pending'
-
-    // Search term (part of the same filter form)
+    // Filters
+    $filterStatus = $_GET['status'] ?? 'all';
+    $filterCrawled = $_GET['crawled_filter'] ?? 'all';
+    $filterPriority = $_GET['priority_filter'] ?? 'all';
+    $filterDonot = $_GET['donot_filter'] ?? 'all';
     $search = isset($_GET['search']) ? trim((string)$_GET['search']) : '';
 
     // Pagination setup
@@ -251,15 +252,31 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
     }
     $orderByClause = "`$orderBy` $orderDir";
 
-    // Build a single WHERE clause that combines status + search
+    // Build WHERE clause from all filters
     $whereParts = [];
 
-    if ($filterStatus === 'crawled') {
-        $whereParts[] = 'crawled = 1';
-    } elseif ($filterStatus === 'pending') {
+    if ($filterStatus === 'pending') {
         $whereParts[] = 'crawled = 0';
-    } elseif ($filterStatus === 'all') {
-        // no status condition
+    } elseif ($filterStatus === 'crawled') {
+        $whereParts[] = 'crawled = 1';
+    }
+
+    if ($filterCrawled === 'yes') {
+        $whereParts[] = 'date_crawled IS NOT NULL';
+    } elseif ($filterCrawled === 'no') {
+        $whereParts[] = 'date_crawled IS NULL';
+    }
+
+    if ($filterPriority === 'high') {
+        $whereParts[] = 'priority = 1';
+    } elseif ($filterPriority === 'normal') {
+        $whereParts[] = 'priority = 0';
+    }
+
+    if ($filterDonot === 'skip') {
+        $whereParts[] = 'donot = 1';
+    } elseif ($filterDonot === 'crawl') {
+        $whereParts[] = 'donot = 0';
     }
 
     if ($search !== '') {
@@ -326,15 +343,14 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
             <h1>Domains</h1>
             <p>Manage crawling targets. <strong><?= number_format($totalDomainsYetToCrawl) ?></strong> domains pending crawl.</p>
         </div>
-        <form method="get" class="d-flex align-items-center gap-2 mt-2">
-            <select name="status" id="statusFilter" class="form-select" onchange="this.form.p.value=1; this.form.submit()" style="width:auto;">
-                <option value="pending" <?= $filterStatus === 'pending' ? 'selected' : '' ?>>Pending</option>
-                <option value="crawled" <?= $filterStatus === 'crawled' ? 'selected' : '' ?>>Crawled</option>
-                <option value="all" <?= $filterStatus === 'all' ? 'selected' : '' ?>>All</option>
-            </select>
+        <form method="get" id="filterForm" class="d-flex align-items-center gap-2 mt-2">
             <input type="text" name="search" class="form-control" style="width:260px" placeholder="Filter by domain..." value="<?= htmlspecialchars($search, ENT_QUOTES) ?>" onkeydown="if(event.key==='Enter'){this.form.p.value=1; this.form.submit();}">
             <button type="submit" class="btn btn-primary" onclick="this.form.p.value=1;"><i class="fas fa-search"></i></button>
-            <a class="btn btn-outline-secondary" href="add_website.php?status=<?= htmlspecialchars($filterStatus, ENT_QUOTES) ?>"><i class="fas fa-times"></i></a>
+            <a class="btn btn-outline-secondary" href="add_website.php" onclick="['status','crawled_filter','priority_filter','donot_filter'].forEach(function(f){document.cookie='dmf_'+f+'=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;SameSite=Lax';});"><i class="fas fa-times"></i></a>
+            <input type="hidden" name="status" value="<?= htmlspecialchars($filterStatus) ?>">
+            <input type="hidden" name="crawled_filter" value="<?= htmlspecialchars($filterCrawled) ?>">
+            <input type="hidden" name="priority_filter" value="<?= htmlspecialchars($filterPriority) ?>">
+            <input type="hidden" name="donot_filter" value="<?= htmlspecialchars($filterDonot) ?>">
             <input type="hidden" name="orderBy" value="<?= htmlspecialchars($orderBy) ?>">
             <input type="hidden" name="orderDir" value="<?= htmlspecialchars($orderDir) ?>">
             <input type="hidden" name="p" value="<?= htmlspecialchars($current_page) ?>">
@@ -365,13 +381,37 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
                 <tr>
                     <th>ID</th>
                     <th class="domain-column">Domain</th>
-                    <th>Status</th>
+                    <th>
+                        <select class="form-select form-select-sm table-filter" data-filter="status" style="min-width:90px;">
+                            <option value="all" <?= $filterStatus === 'all' ? 'selected' : '' ?>>Status</option>
+                            <option value="pending" <?= $filterStatus === 'pending' ? 'selected' : '' ?>>Pending</option>
+                            <option value="crawled" <?= $filterStatus === 'crawled' ? 'selected' : '' ?>>Crawled</option>
+                        </select>
+                    </th>
                     <th>Added</th>
-                    <th>Crawled</th>
+                    <th>
+                        <select class="form-select form-select-sm table-filter" data-filter="crawled_filter" style="min-width:90px;">
+                            <option value="all" <?= $filterCrawled === 'all' ? 'selected' : '' ?>>Crawled</option>
+                            <option value="yes" <?= $filterCrawled === 'yes' ? 'selected' : '' ?>>Yes</option>
+                            <option value="no" <?= $filterCrawled === 'no' ? 'selected' : '' ?>>No</option>
+                        </select>
+                    </th>
                     <th>URLs</th>
                     <th>Emails</th>
-                    <th>Priority</th>
-                    <th>DoNot</th>
+                    <th>
+                        <select class="form-select form-select-sm table-filter" data-filter="priority_filter" style="min-width:90px;">
+                            <option value="all" <?= $filterPriority === 'all' ? 'selected' : '' ?>>Priority</option>
+                            <option value="normal" <?= $filterPriority === 'normal' ? 'selected' : '' ?>>Normal</option>
+                            <option value="high" <?= $filterPriority === 'high' ? 'selected' : '' ?>>High</option>
+                        </select>
+                    </th>
+                    <th>
+                        <select class="form-select form-select-sm table-filter" data-filter="donot_filter" style="min-width:90px;">
+                            <option value="all" <?= $filterDonot === 'all' ? 'selected' : '' ?>>DoNot</option>
+                            <option value="crawl" <?= $filterDonot === 'crawl' ? 'selected' : '' ?>>Crawl</option>
+                            <option value="skip" <?= $filterDonot === 'skip' ? 'selected' : '' ?>>Skip</option>
+                        </select>
+                    </th>
                     <th class="actions-col text-center">Actions</th>
                 </tr>
             </thead>
@@ -504,31 +544,35 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
     </div>
 
     <!-- Pagination -->
-    <?php if ($total_pages > 1): ?>
+    <?php if ($total_pages > 1):
+        $pq = http_build_query([
+            'status' => $filterStatus, 'crawled_filter' => $filterCrawled,
+            'priority_filter' => $filterPriority, 'donot_filter' => $filterDonot,
+            'search' => $search, 'orderBy' => $orderBy, 'orderDir' => $orderDir,
+        ]);
+    ?>
     <nav aria-label="Page navigation">
         <ul class="pagination pagination-sm justify-content-center mt-3">
             <li class="page-item <?= ($current_page <= 1) ? 'disabled' : '' ?>">
-                <a class="page-link" href="?p=1&status=<?= urlencode($filterStatus) ?>&search=<?= urlencode($search) ?>&orderBy=<?= urlencode($orderBy) ?>&orderDir=<?= urlencode($orderDir) ?>">First</a>
+                <a class="page-link" href="?p=1&<?= $pq ?>">First</a>
             </li>
             <li class="page-item <?= ($current_page <= 1) ? 'disabled' : '' ?>">
-                <a class="page-link" href="?p=<?= intval($current_page) - 1 ?>&status=<?= urlencode($filterStatus) ?>&search=<?= urlencode($search) ?>&orderBy=<?= urlencode($orderBy) ?>&orderDir=<?= urlencode($orderDir) ?>">Prev</a>
+                <a class="page-link" href="?p=<?= intval($current_page) - 1 ?>&<?= $pq ?>">Prev</a>
             </li>
-            
             <?php
             $start = max(1, intval($current_page) - 2);
             $end = min(intval($total_pages), intval($current_page) + 2);
             for ($i = $start; $i <= $end; $i++):
             ?>
             <li class="page-item <?= ($i == $current_page) ? 'active' : '' ?>">
-                <a class="page-link" href="?p=<?= $i ?>&status=<?= urlencode($filterStatus) ?>&search=<?= urlencode($search) ?>&orderBy=<?= urlencode($orderBy) ?>&orderDir=<?= urlencode($orderDir) ?>"><?= $i ?></a>
+                <a class="page-link" href="?p=<?= $i ?>&<?= $pq ?>"><?= $i ?></a>
             </li>
             <?php endfor; ?>
-
             <li class="page-item <?= ($current_page >= $total_pages) ? 'disabled' : '' ?>">
-                <a class="page-link" href="?p=<?= intval($current_page) + 1 ?>&status=<?= urlencode($filterStatus) ?>&search=<?= urlencode($search) ?>&orderBy=<?= urlencode($orderBy) ?>&orderDir=<?= urlencode($orderDir) ?>">Next</a>
+                <a class="page-link" href="?p=<?= intval($current_page) + 1 ?>&<?= $pq ?>">Next</a>
             </li>
             <li class="page-item <?= ($current_page >= $total_pages) ? 'disabled' : '' ?>">
-                <a class="page-link" href="?p=<?= $total_pages ?>&status=<?= urlencode($filterStatus) ?>&search=<?= urlencode($search) ?>&orderBy=<?= urlencode($orderBy) ?>&orderDir=<?= urlencode($orderDir) ?>">Last</a>
+                <a class="page-link" href="?p=<?= $total_pages ?>&<?= $pq ?>">Last</a>
             </li>
         </ul>
     </nav>
@@ -537,6 +581,57 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
 
 <script data-cfasync="false" src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script data-cfasync="false">
+// --- Cookie helpers ---
+function setCookie(name, value, days) {
+    var d = new Date();
+    d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
+    document.cookie = name + '=' + encodeURIComponent(value) + ';expires=' + d.toUTCString() + ';path=/;SameSite=Lax';
+}
+function getCookie(name) {
+    var match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+    return match ? decodeURIComponent(match[2]) : null;
+}
+
+// --- Table header filter dropdowns ---
+document.querySelectorAll('.table-filter').forEach(function(sel) {
+    sel.addEventListener('change', function() {
+        var filterName = this.dataset.filter;
+        var val = this.value;
+        // Save to cookie
+        setCookie('dmf_' + filterName, val, 90);
+        // Update the hidden input in filterForm and submit
+        var form = document.getElementById('filterForm');
+        var hidden = form.querySelector('input[name="' + filterName + '"]');
+        if (hidden) hidden.value = val;
+        form.querySelector('input[name="p"]').value = '1';
+        form.submit();
+    });
+});
+
+// --- On page load: restore filters from cookies if no explicit URL param ---
+(function() {
+    var params = new URLSearchParams(window.location.search);
+    var filters = ['status', 'crawled_filter', 'priority_filter', 'donot_filter'];
+    var needsRedirect = false;
+    var form = document.getElementById('filterForm');
+
+    // Only apply cookies if there are NO filter params at all in the URL (fresh visit)
+    var hasAnyFilter = filters.some(function(f) { return params.has(f); });
+    if (!hasAnyFilter) {
+        filters.forEach(function(f) {
+            var saved = getCookie('dmf_' + f);
+            if (saved && saved !== 'all') {
+                params.set(f, saved);
+                needsRedirect = true;
+            }
+        });
+        if (needsRedirect) {
+            window.location.search = params.toString();
+        }
+    }
+})();
+
+// --- Toggle badges (priority/donot) ---
 document.addEventListener('click', function(e) {
     var el = e.target.closest('.js-toggle');
     if (!el) return;
@@ -584,6 +679,23 @@ document.addEventListener('click', function(e) {
 .toggle-badge:hover {
     transform: scale(1.1);
     box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+.table-filter {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.15);
+    color: inherit;
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 0.2rem 0.4rem;
+    cursor: pointer;
+}
+.table-filter:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(79,70,229,0.25);
+}
+.table-filter option {
+    background: #1e293b;
+    color: #e2e8f0;
 }
 </style>
 </body>
