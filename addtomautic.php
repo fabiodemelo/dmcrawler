@@ -445,9 +445,11 @@ $headers[] = "MIME-Version: 1.0";
 $headers[] = "Content-Type: text/plain; charset=UTF-8";
 
 // Check notification settings before sending
+// Skip notification entirely if nothing happened (empty batch)
 // Circuit breaker alerts ALWAYS send regardless of notification preferences
 $shouldSendEmail = false;
-if (!empty($EMAIL_TO)) {
+$batchHadWork = count($rows) > 0;
+if (!empty($EMAIL_TO) && $batchHadWork) {
     if ($circuitBroken) {
         $shouldSendEmail = true; // Always alert on circuit breaker
     } elseif ($permanentlyFailed > 0 && $ENABLE_EMAIL_ADDTOMAUTIC_ERROR === 1) {
@@ -457,8 +459,6 @@ if (!empty($EMAIL_TO)) {
     } elseif (count($errors) === 0 && $ENABLE_EMAIL_ADDTOMAUTIC_SUCCESS === 1) {
         $shouldSendEmail = true;
     }
-} else {
-    err("Email not sent: Recipient address (email_to) is not configured in settings.");
 }
 
 if ($shouldSendEmail) {
