@@ -376,13 +376,25 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
     </div>
 
     <div class="table-card">
-        <table class="table">
+        <table class="table table-fixed-layout">
+            <colgroup>
+                <col style="width:60px;">
+                <col>
+                <col style="width:100px;">
+                <col style="width:100px;">
+                <col style="width:100px;">
+                <col style="width:60px;">
+                <col style="width:60px;">
+                <col style="width:100px;">
+                <col style="width:100px;">
+                <col style="width:140px;">
+            </colgroup>
             <thead>
                 <tr>
                     <th>ID</th>
                     <th class="domain-column">Domain</th>
                     <th>
-                        <select class="form-select form-select-sm table-filter" data-filter="status" style="min-width:90px;">
+                        <select class="form-select form-select-sm table-filter" data-filter="status">
                             <option value="all" <?= $filterStatus === 'all' ? 'selected' : '' ?>>Status</option>
                             <option value="pending" <?= $filterStatus === 'pending' ? 'selected' : '' ?>>Pending</option>
                             <option value="crawled" <?= $filterStatus === 'crawled' ? 'selected' : '' ?>>Crawled</option>
@@ -390,7 +402,7 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
                     </th>
                     <th>Added</th>
                     <th>
-                        <select class="form-select form-select-sm table-filter" data-filter="crawled_filter" style="min-width:90px;">
+                        <select class="form-select form-select-sm table-filter" data-filter="crawled_filter">
                             <option value="all" <?= $filterCrawled === 'all' ? 'selected' : '' ?>>Crawled</option>
                             <option value="yes" <?= $filterCrawled === 'yes' ? 'selected' : '' ?>>Yes</option>
                             <option value="no" <?= $filterCrawled === 'no' ? 'selected' : '' ?>>No</option>
@@ -399,14 +411,14 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
                     <th>URLs</th>
                     <th>Emails</th>
                     <th>
-                        <select class="form-select form-select-sm table-filter" data-filter="priority_filter" style="min-width:90px;">
+                        <select class="form-select form-select-sm table-filter" data-filter="priority_filter">
                             <option value="all" <?= $filterPriority === 'all' ? 'selected' : '' ?>>Priority</option>
                             <option value="normal" <?= $filterPriority === 'normal' ? 'selected' : '' ?>>Normal</option>
                             <option value="high" <?= $filterPriority === 'high' ? 'selected' : '' ?>>High</option>
                         </select>
                     </th>
                     <th>
-                        <select class="form-select form-select-sm table-filter" data-filter="donot_filter" style="min-width:90px;">
+                        <select class="form-select form-select-sm table-filter" data-filter="donot_filter">
                             <option value="all" <?= $filterDonot === 'all' ? 'selected' : '' ?>>DoNot</option>
                             <option value="crawl" <?= $filterDonot === 'crawl' ? 'selected' : '' ?>>Crawl</option>
                             <option value="skip" <?= $filterDonot === 'skip' ? 'selected' : '' ?>>Skip</option>
@@ -680,14 +692,20 @@ document.addEventListener('click', function(e) {
     transform: scale(1.1);
     box-shadow: 0 2px 8px rgba(0,0,0,0.15);
 }
+.table-fixed-layout {
+    table-layout: fixed;
+    width: 100%;
+}
 .table-filter {
     background: transparent;
     border: 1px solid rgba(255,255,255,0.15);
     color: inherit;
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     font-weight: 600;
-    padding: 0.2rem 0.4rem;
+    padding: 0.15rem 0.3rem;
     cursor: pointer;
+    width: 100%;
+    box-sizing: border-box;
 }
 .table-filter:focus {
     border-color: var(--primary);
