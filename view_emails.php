@@ -90,6 +90,8 @@ $filterDomain = isset($_GET['filter_domain']) ? $conn->real_escape_string($_GET[
 $filterEmail  = isset($_GET['filter_email'])  ? $conn->real_escape_string($_GET['filter_email'])  : '';
 $filterMa     = isset($_GET['filter_ma']) && in_array($_GET['filter_ma'], ['mautic', 'scheduled', 'failed']) ? $_GET['filter_ma'] : '';
 $filterCampaign = isset($_GET['filter_campaign']) ? $conn->real_escape_string($_GET['filter_campaign']) : '';
+$filterKeyword = isset($_GET['filter_keyword']) ? $conn->real_escape_string($_GET['filter_keyword']) : '';
+$filterLocation = isset($_GET['filter_location']) ? $conn->real_escape_string($_GET['filter_location']) : '';
 
 // Whitelist orderBy columns
 $valid_order_columns = ['id', 'd.domain', 'e.name', 'e.email', 'e.created_at', 'e.ma'];
@@ -132,6 +134,14 @@ if ($filterMa !== '') {
 if ($filterCampaign !== '') {
     $escapedCampaign = $conn->real_escape_string($filterCampaign);
     $columnWhereClauses[] = "e.campaign_id = '{$escapedCampaign}'";
+}
+if ($filterKeyword !== '') {
+    $escapedKw = $conn->real_escape_string($filterKeyword);
+    $columnWhereClauses[] = "e.source_keyword = '{$escapedKw}'";
+}
+if ($filterLocation !== '') {
+    $escapedLoc = $conn->real_escape_string($filterLocation);
+    $columnWhereClauses[] = "e.source_location = '{$escapedLoc}'";
 }
 
 $whereClauses = array_merge($baseWhereClauses, $columnWhereClauses);
@@ -177,6 +187,8 @@ if ($countRes && ($c = $countRes->fetch_assoc())) {
 // Distinct options for header filters (based on base filters like time/search)
 $domainsRes = $conn->query("SELECT DISTINCT d.domain FROM emails e JOIN domains d ON e.domain_id = d.id {$whereSqlOptions} ORDER BY d.domain ASC");
 $campaignsRes = $conn->query("SELECT id, name FROM campaigns ORDER BY name ASC");
+$keywordsRes = $conn->query("SELECT DISTINCT source_keyword FROM emails WHERE source_keyword IS NOT NULL AND source_keyword != '' ORDER BY source_keyword ASC");
+$locationsRes = $conn->query("SELECT DISTINCT source_location FROM emails WHERE source_location IS NOT NULL AND source_location != '' ORDER BY source_location ASC");
 
 // Helper function to generate sort links
 function sort_link($column, $text, $currentOrderBy, $currentOrderDir) {
@@ -245,6 +257,8 @@ function sort_link($column, $text, $currentOrderBy, $currentOrderDir) {
                 <input type="hidden" name="filter_email" value="<?= htmlspecialchars($filterEmail) ?>">
                 <input type="hidden" name="filter_ma" value="<?= htmlspecialchars($filterMa) ?>">
                 <input type="hidden" name="filter_campaign" value="<?= htmlspecialchars($filterCampaign) ?>">
+                <input type="hidden" name="filter_keyword" value="<?= htmlspecialchars($filterKeyword) ?>">
+                <input type="hidden" name="filter_location" value="<?= htmlspecialchars($filterLocation) ?>">
             </form>
         </div>
     </div>
@@ -273,16 +287,50 @@ function sort_link($column, $text, $currentOrderBy, $currentOrderDir) {
         <div class="d-flex gap-2">
             <a href="export.php?<?= http_build_query([
                     'filter' => $filter, 'search' => $search, 'filter_domain' => $filterDomain,
-                    'filter_email' => $filterEmail, 'filter_ma' => $filterMa, 'filter_campaign' => $filterCampaign
+                    'filter_email' => $filterEmail, 'filter_ma' => $filterMa,
+                    'filter_campaign' => $filterCampaign, 'filter_keyword' => $filterKeyword,
+                    'filter_location' => $filterLocation,
             ]) ?>" class="btn btn-success"><i class="fas fa-download me-2"></i>Export CSV</a>
             <a href="verifyemail.php" class="btn btn-outline-secondary"><i class="fas fa-check-double me-2"></i>Verify Emails</a>
         </div>
     </div>
 
+    <!-- Secondary filters: Campaign, Keyword, Location -->
+    <form method="get" id="secondaryFiltersForm" class="d-flex gap-2 mb-3 flex-wrap align-items-center">
+        <?php foreach ($_GET as $key => $value):
+            if (!in_array($key, ['filter_campaign', 'filter_keyword', 'filter_location', 'msg_type', 'msg_text', 'page'])): ?>
+            <input type="hidden" name="<?= htmlspecialchars($key) ?>" value="<?= htmlspecialchars($value) ?>">
+        <?php endif; endforeach; ?>
+        <select name="filter_campaign" class="form-select form-select-sm" onchange="this.form.submit()" style="width:auto; min-width:140px;">
+            <option value="">All Campaigns</option>
+            <?php if ($campaignsRes): while ($rowC = $campaignsRes->fetch_assoc()): ?>
+                <option value="<?= htmlspecialchars($rowC['id']) ?>" <?= $filterCampaign == $rowC['id'] ? 'selected' : '' ?>>
+                    <?= htmlspecialchars($rowC['name']) ?>
+                </option>
+            <?php endwhile; endif; ?>
+        </select>
+        <select name="filter_keyword" class="form-select form-select-sm" onchange="this.form.submit()" style="width:auto; min-width:140px;">
+            <option value="">All Keywords</option>
+            <?php if ($keywordsRes): while ($rowK = $keywordsRes->fetch_assoc()): ?>
+                <option value="<?= htmlspecialchars($rowK['source_keyword']) ?>" <?= $filterKeyword === $rowK['source_keyword'] ? 'selected' : '' ?>>
+                    <?= htmlspecialchars($rowK['source_keyword']) ?>
+                </option>
+            <?php endwhile; endif; ?>
+        </select>
+        <select name="filter_location" class="form-select form-select-sm" onchange="this.form.submit()" style="width:auto; min-width:140px;">
+            <option value="">All Locations</option>
+            <?php if ($locationsRes): while ($rowL = $locationsRes->fetch_assoc()): ?>
+                <option value="<?= htmlspecialchars($rowL['source_location']) ?>" <?= $filterLocation === $rowL['source_location'] ? 'selected' : '' ?>>
+                    <?= htmlspecialchars($rowL['source_location']) ?>
+                </option>
+            <?php endwhile; endif; ?>
+        </select>
+    </form>
+
     <!-- Column Filters and Table -->
     <form method="get" id="headerFiltersForm" class="mb-0">
         <?php foreach ($_GET as $key => $value):
-            if (!in_array($key, ['filter_domain', 'filter_email', 'filter_ma', 'filter_campaign', 'msg_type', 'msg_text', 'page'])): ?>
+            if (!in_array($key, ['filter_domain', 'filter_email', 'filter_ma', 'msg_type', 'msg_text', 'page'])): ?>
             <input type="hidden" name="<?= htmlspecialchars($key) ?>" value="<?= htmlspecialchars($value) ?>">
         <?php endif; endforeach; ?>
 
@@ -301,16 +349,7 @@ function sort_link($column, $text, $currentOrderBy, $currentOrderDir) {
                             <?php endwhile; endif; ?>
                         </select>
                     </th>
-                    <th>
-                        <select name="filter_campaign" class="form-select form-select-sm" onchange="this.form.submit()" style="max-width:160px;">
-                            <option value="">All Campaigns</option>
-                            <?php if ($campaignsRes): while ($rowC = $campaignsRes->fetch_assoc()): ?>
-                                <option value="<?= htmlspecialchars($rowC['id']) ?>" <?= $filterCampaign === $rowC['id'] ? 'selected' : '' ?>>
-                                    <?= htmlspecialchars($rowC['name']) ?>
-                                </option>
-                            <?php endwhile; endif; ?>
-                        </select>
-                    </th>
+                    <th>Source</th>
                     <th><?= sort_link('e.name', 'Name', $orderBy, $orderDir) ?></th>
                     <th><?= sort_link('e.email', 'Email', $orderBy, $orderDir) ?></th>
                     <th><?= sort_link('e.created_at', 'Date Found', $orderBy, $orderDir) ?></th>

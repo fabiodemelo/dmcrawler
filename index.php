@@ -144,24 +144,28 @@ $acceptRate = ($totalEmailsFound + $totalRejected) > 0 ? round($totalEmailsFound
                                 <i class="fas fa-spider"></i>
                                 Run Crawler
                             </a>
+                            <div class="text-muted mt-1" style="font-size:0.7rem; line-height:1.3;">Visits pending domains, scans their pages, and extracts email addresses into the database.</div>
                         </div>
                         <div class="col-6">
                             <a href="run_get_urls.php" class="action-btn btn-info w-100">
                                 <i class="fas fa-link"></i>
                                 Get URLs
                             </a>
+                            <div class="text-muted mt-1" style="font-size:0.7rem; line-height:1.3;">Searches Google/Bing via SerpAPI using your keywords + locations to discover new domains to crawl.</div>
                         </div>
                         <div class="col-6">
                             <a href="run_get_emails.php" class="action-btn btn-warning w-100">
                                 <i class="fas fa-envelope-open-text"></i>
                                 Get Emails
                             </a>
+                            <div class="text-muted mt-1" style="font-size:0.7rem; line-height:1.3;">Same as Run Crawler above. Picks the next pending domain and crawls it for emails.</div>
                         </div>
                         <div class="col-6">
                             <a href="run_send_mautic.php" class="action-btn btn-success w-100">
                                 <i class="fas fa-share-square"></i>
                                 Send to Mautic
                             </a>
+                            <div class="text-muted mt-1" style="font-size:0.7rem; line-height:1.3;">Sends pending emails to Mautic CRM via API. Marks them as synced or failed after each attempt.</div>
                         </div>
                     </div>
                 </div>

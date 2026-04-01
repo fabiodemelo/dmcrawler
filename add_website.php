@@ -233,6 +233,9 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
     $filterCrawled = $_GET['crawled_filter'] ?? 'all';
     $filterPriority = $_GET['priority_filter'] ?? 'all';
     $filterDonot = $_GET['donot_filter'] ?? 'all';
+    $filterCampaign = $_GET['filter_campaign'] ?? '';
+    $filterKeyword = $_GET['filter_keyword'] ?? '';
+    $filterLocation = $_GET['filter_location'] ?? '';
     $search = isset($_GET['search']) ? trim((string)$_GET['search']) : '';
 
     // Pagination setup
@@ -250,38 +253,50 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
     if (!in_array(strtoupper($orderDir), ['ASC', 'DESC'])) {
         $orderDir = 'DESC';
     }
-    $orderByClause = "`$orderBy` $orderDir";
+    $orderByClause = "d.`$orderBy` $orderDir";
 
     // Build WHERE clause from all filters
     $whereParts = [];
 
     if ($filterStatus === 'pending') {
-        $whereParts[] = 'crawled = 0';
+        $whereParts[] = 'd.crawled = 0';
     } elseif ($filterStatus === 'crawled') {
-        $whereParts[] = 'crawled = 1';
+        $whereParts[] = 'd.crawled = 1';
     }
 
     if ($filterCrawled === 'yes') {
-        $whereParts[] = 'date_crawled IS NOT NULL';
+        $whereParts[] = 'd.date_crawled IS NOT NULL';
     } elseif ($filterCrawled === 'no') {
-        $whereParts[] = 'date_crawled IS NULL';
+        $whereParts[] = 'd.date_crawled IS NULL';
     }
 
     if ($filterPriority === 'high') {
-        $whereParts[] = 'priority = 1';
+        $whereParts[] = 'd.priority = 1';
     } elseif ($filterPriority === 'normal') {
-        $whereParts[] = 'priority = 0';
+        $whereParts[] = 'd.priority = 0';
     }
 
     if ($filterDonot === 'skip') {
-        $whereParts[] = 'donot = 1';
+        $whereParts[] = 'd.donot = 1';
     } elseif ($filterDonot === 'crawl') {
-        $whereParts[] = 'donot = 0';
+        $whereParts[] = 'd.donot = 0';
+    }
+
+    if ($filterCampaign !== '') {
+        $whereParts[] = "d.campaign_id = " . (int)$filterCampaign;
+    }
+    if ($filterKeyword !== '') {
+        $ek = $conn->real_escape_string($filterKeyword);
+        $whereParts[] = "d.source_keyword = '{$ek}'";
+    }
+    if ($filterLocation !== '') {
+        $el = $conn->real_escape_string($filterLocation);
+        $whereParts[] = "d.source_location = '{$el}'";
     }
 
     if ($search !== '') {
         $s = $conn->real_escape_string($search);
-        $whereParts[] = "domain LIKE '%{$s}%'";
+        $whereParts[] = "d.domain LIKE '%{$s}%'";
     }
 
     $whereClause = !empty($whereParts) ? ('WHERE ' . implode(' AND ', $whereParts)) : '';
@@ -294,7 +309,7 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
     }
 
     // Get total number of records for the current filter
-    $count_sql = "SELECT COUNT(*) AS total FROM domains {$whereClause}";
+    $count_sql = "SELECT COUNT(*) AS total FROM domains d LEFT JOIN campaigns c ON d.campaign_id = c.id {$whereClause}";
     $count_result = $conn->query($count_sql);
     $total_records = 0;
     if ($count_result) {
@@ -307,11 +322,13 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
 
     // Fetch domains for display with filter, sorting, and pagination
     $domains = [];
-    $sql = "SELECT id, domain, crawled, date_added, date_crawled, emails_found, urls_crawled, priority, donot
-            FROM domains {$whereClause}
+    $sql = "SELECT d.id, d.domain, d.crawled, d.date_added, d.date_crawled, d.emails_found, d.urls_crawled, d.priority, d.donot,
+                   d.campaign_id, d.source_keyword, d.source_location, c.name AS campaign_name
+            FROM domains d
+            LEFT JOIN campaigns c ON d.campaign_id = c.id
+            {$whereClause}
             ORDER BY {$orderByClause}
             LIMIT {$records_per_page} OFFSET {$offset}";
-    error_log("Executing SQL: " . $sql); // Log the executed SQL query
     $result = $conn->query($sql);
     if ($result) {
         while ($row = $result->fetch_assoc()) {
@@ -322,6 +339,19 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
         $message = '<div class="alert alert-danger">Error fetching domains: ' . $conn->error . '</div>';
         error_log("Error fetching domains with pagination: " . $conn->error . " SQL: " . $sql);
     }
+
+    // Fetch filter dropdown options
+    $campaignsOpts = [];
+    $r = $conn->query("SELECT id, name FROM campaigns ORDER BY name ASC");
+    if ($r) { while ($row = $r->fetch_assoc()) $campaignsOpts[] = $row; }
+
+    $keywordsOpts = [];
+    $r = $conn->query("SELECT DISTINCT source_keyword FROM domains WHERE source_keyword IS NOT NULL AND source_keyword != '' ORDER BY source_keyword ASC");
+    if ($r) { while ($row = $r->fetch_assoc()) $keywordsOpts[] = $row['source_keyword']; }
+
+    $locationsOpts = [];
+    $r = $conn->query("SELECT DISTINCT source_location FROM domains WHERE source_location IS NOT NULL AND source_location != '' ORDER BY source_location ASC");
+    if ($r) { while ($row = $r->fetch_assoc()) $locationsOpts[] = $row['source_location']; }
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -341,20 +371,54 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
     <div class="page-header d-flex justify-content-between align-items-start">
         <div>
             <h1>Domains</h1>
-            <p>Manage crawling targets. <strong><?= number_format($totalDomainsYetToCrawl) ?></strong> domains pending crawl.</p>
+            <p>Manage crawling targets. <strong><?= number_format($totalDomainsYetToCrawl) ?></strong> domains pending crawl. <strong><?= number_format($total_records) ?></strong> matching current filters.</p>
         </div>
         <form method="get" id="filterForm" class="d-flex align-items-center gap-2 mt-2">
             <input type="text" name="search" class="form-control" style="width:260px" placeholder="Filter by domain..." value="<?= htmlspecialchars($search, ENT_QUOTES) ?>" onkeydown="if(event.key==='Enter'){this.form.p.value=1; this.form.submit();}">
             <button type="submit" class="btn btn-primary" onclick="this.form.p.value=1;"><i class="fas fa-search"></i></button>
-            <a class="btn btn-outline-secondary" href="add_website.php" onclick="['status','crawled_filter','priority_filter','donot_filter'].forEach(function(f){document.cookie='dmf_'+f+'=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;SameSite=Lax';});"><i class="fas fa-times"></i></a>
+            <?php
+                $exportParams = http_build_query(array_filter([
+                    'status' => $filterStatus, 'crawled_filter' => $filterCrawled,
+                    'priority_filter' => $filterPriority, 'donot_filter' => $filterDonot,
+                    'filter_campaign' => $filterCampaign, 'filter_keyword' => $filterKeyword,
+                    'filter_location' => $filterLocation, 'search' => $search,
+                ]));
+            ?>
+            <a class="btn btn-success" href="export_domains.php?<?= $exportParams ?>" title="Export CSV"><i class="fas fa-download"></i></a>
+            <a class="btn btn-outline-secondary" href="add_website.php" onclick="['status','crawled_filter','priority_filter','donot_filter','filter_campaign','filter_keyword','filter_location'].forEach(function(f){document.cookie='dmf_'+f+'=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;SameSite=Lax';});"><i class="fas fa-times"></i></a>
             <input type="hidden" name="status" value="<?= htmlspecialchars($filterStatus) ?>">
             <input type="hidden" name="crawled_filter" value="<?= htmlspecialchars($filterCrawled) ?>">
             <input type="hidden" name="priority_filter" value="<?= htmlspecialchars($filterPriority) ?>">
             <input type="hidden" name="donot_filter" value="<?= htmlspecialchars($filterDonot) ?>">
+            <input type="hidden" name="filter_campaign" value="<?= htmlspecialchars($filterCampaign) ?>">
+            <input type="hidden" name="filter_keyword" value="<?= htmlspecialchars($filterKeyword) ?>">
+            <input type="hidden" name="filter_location" value="<?= htmlspecialchars($filterLocation) ?>">
             <input type="hidden" name="orderBy" value="<?= htmlspecialchars($orderBy) ?>">
             <input type="hidden" name="orderDir" value="<?= htmlspecialchars($orderDir) ?>">
             <input type="hidden" name="p" value="<?= htmlspecialchars($current_page) ?>">
         </form>
+    </div>
+
+    <!-- Secondary filters: Campaign, Keyword, Location -->
+    <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
+        <select class="form-select form-select-sm table-filter" data-filter="filter_campaign" style="width:auto; min-width:140px;">
+            <option value="">All Campaigns</option>
+            <?php foreach ($campaignsOpts as $c): ?>
+            <option value="<?= $c['id'] ?>" <?= $filterCampaign == $c['id'] ? 'selected' : '' ?>><?= htmlspecialchars($c['name']) ?></option>
+            <?php endforeach; ?>
+        </select>
+        <select class="form-select form-select-sm table-filter" data-filter="filter_keyword" style="width:auto; min-width:140px;">
+            <option value="">All Keywords</option>
+            <?php foreach ($keywordsOpts as $kw): ?>
+            <option value="<?= htmlspecialchars($kw) ?>" <?= $filterKeyword === $kw ? 'selected' : '' ?>><?= htmlspecialchars($kw) ?></option>
+            <?php endforeach; ?>
+        </select>
+        <select class="form-select form-select-sm table-filter" data-filter="filter_location" style="width:auto; min-width:140px;">
+            <option value="">All Locations</option>
+            <?php foreach ($locationsOpts as $loc): ?>
+            <option value="<?= htmlspecialchars($loc) ?>" <?= $filterLocation === $loc ? 'selected' : '' ?>><?= htmlspecialchars($loc) ?></option>
+            <?php endforeach; ?>
+        </select>
     </div>
 
     <?= $message ?>
@@ -378,16 +442,17 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
     <div class="table-card">
         <table class="table table-fixed-layout">
             <colgroup>
-                <col style="width:60px;">
+                <col style="width:55px;">
                 <col>
-                <col style="width:100px;">
-                <col style="width:100px;">
-                <col style="width:100px;">
-                <col style="width:60px;">
-                <col style="width:60px;">
-                <col style="width:100px;">
-                <col style="width:100px;">
-                <col style="width:140px;">
+                <col style="width:90px;">
+                <col style="width:90px;">
+                <col style="width:90px;">
+                <col style="width:50px;">
+                <col style="width:50px;">
+                <col style="width:90px;">
+                <col style="width:90px;">
+                <col style="width:150px;">
+                <col style="width:130px;">
             </colgroup>
             <thead>
                 <tr>
@@ -424,12 +489,13 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
                             <option value="skip" <?= $filterDonot === 'skip' ? 'selected' : '' ?>>Skip</option>
                         </select>
                     </th>
+                    <th>Source</th>
                     <th class="actions-col text-center">Actions</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if (empty($domains)): ?>
-                <tr><td colspan="10">
+                <tr><td colspan="11">
                     <div class="empty-state">
                         <i class="fas fa-globe"></i>
                         <h4>No domains found</h4>
@@ -473,6 +539,20 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
                               style="cursor:pointer;user-select:none;">
                             <?= $row['donot'] ? 'Skip' : 'Crawl' ?>
                         </span>
+                    </td>
+                    <td>
+                        <?php
+                        $srcParts = array_filter([
+                            $row['campaign_name'] ?? '',
+                            $row['source_location'] ?? '',
+                            $row['source_keyword'] ?? '',
+                        ]);
+                        ?>
+                        <?php if (!empty($srcParts)): ?>
+                        <span style="font-size:0.7rem; line-height:1.2; display:block; color:#94a3b8;"><?= htmlspecialchars(implode(' > ', $srcParts)) ?></span>
+                        <?php else: ?>
+                        <span class="text-muted" style="font-size:0.7rem;">-</span>
+                        <?php endif; ?>
                     </td>
                     <td class="text-center">
                         <div class="btn-group btn-group-sm">
@@ -560,6 +640,8 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
         $pq = http_build_query([
             'status' => $filterStatus, 'crawled_filter' => $filterCrawled,
             'priority_filter' => $filterPriority, 'donot_filter' => $filterDonot,
+            'filter_campaign' => $filterCampaign, 'filter_keyword' => $filterKeyword,
+            'filter_location' => $filterLocation,
             'search' => $search, 'orderBy' => $orderBy, 'orderDir' => $orderDir,
         ]);
     ?>
@@ -623,7 +705,7 @@ document.querySelectorAll('.table-filter').forEach(function(sel) {
 // --- On page load: restore filters from cookies if no explicit URL param ---
 (function() {
     var params = new URLSearchParams(window.location.search);
-    var filters = ['status', 'crawled_filter', 'priority_filter', 'donot_filter'];
+    var filters = ['status', 'crawled_filter', 'priority_filter', 'donot_filter', 'filter_campaign', 'filter_keyword', 'filter_location'];
     var needsRedirect = false;
     var form = document.getElementById('filterForm');
 
