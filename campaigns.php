@@ -6,6 +6,28 @@ ob_start();
 include 'auth_check.php';
 include 'db.php';
 
+// Auto-create campaigns table + columns if missing
+$conn->query("CREATE TABLE IF NOT EXISTS campaigns (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    status TINYINT(1) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+$_chk = $conn->query("SELECT COUNT(*) AS cnt FROM campaigns");
+if ($_chk && (int)$_chk->fetch_assoc()['cnt'] === 0) {
+    $conn->query("INSERT INTO campaigns (name, status) VALUES ('General', 1)");
+}
+// Auto-add campaign columns to domains/emails if missing
+foreach (['campaign_id' => 'INT NULL', 'source_keyword' => 'VARCHAR(255) NULL', 'source_location' => 'VARCHAR(255) NULL'] as $_col => $_def) {
+    foreach (['domains', 'emails'] as $_tbl) {
+        $_r = @$conn->query("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='{$_tbl}' AND COLUMN_NAME='{$_col}' LIMIT 1");
+        if (!$_r || $_r->num_rows === 0) {
+            @$conn->query("ALTER TABLE `{$_tbl}` ADD COLUMN `{$_col}` {$_def}");
+        }
+    }
+}
+
 function redirect_self(array $params = []): void {
     $base = strtok($_SERVER['REQUEST_URI'], '?');
     $query = array_merge($_GET, $params);
