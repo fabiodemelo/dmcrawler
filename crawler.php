@@ -564,14 +564,28 @@ foreach ($argv ?? [] as $arg) {
 
 // Select domain to crawl
 $has_blacklisted = (bool)$conn->query("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'domains' AND COLUMN_NAME = 'blacklisted'");
+$has_campaign_id = (bool)$conn->query("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'domains' AND COLUMN_NAME = 'campaign_id'");
+
+// Get active campaign — crawler only processes domains from the active campaign
+$activeCampaignId = null;
+if ($has_campaign_id) {
+    $campRes = @$conn->query("SELECT id, name FROM campaigns WHERE status = 1 LIMIT 1");
+    if ($campRes && ($campRow = $campRes->fetch_assoc())) {
+        $activeCampaignId = (int)$campRow['id'];
+        stream_message("Active campaign: {$campRow['name']} (ID: {$activeCampaignId})");
+    }
+}
 
 if ($forced_domain_id > 0) {
     // Crawl a specific domain by ID (regardless of crawled status — re-crawl it)
     $domain_query = "SELECT * FROM domains WHERE id = {$forced_domain_id} LIMIT 1";
     stream_message("Forced crawl for domain ID: {$forced_domain_id}");
 } else {
-    // Select next domain in queue (skip blacklisted, prioritize by quality + priority)
+    // Select next domain in queue — only from active campaign
     $domain_query = "SELECT * FROM domains WHERE crawled = 0 AND donot = 0";
+    if ($has_campaign_id && $activeCampaignId !== null) {
+        $domain_query .= " AND campaign_id = {$activeCampaignId}";
+    }
     if ($has_blacklisted) {
         $domain_query .= " AND (blacklisted = 0 OR blacklisted IS NULL)";
         $domain_query .= " ORDER BY priority DESC, COALESCE(quality_score, 50) DESC, id ASC LIMIT 1";

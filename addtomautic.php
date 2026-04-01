@@ -118,10 +118,22 @@ function err(string $line): void
 // ================== DB QUERIES (using shared db()) ==================
 function fetch_pending_emails(int $limit): array
 {
+    // Only sync emails from the active campaign
+    $campaignFilter = '';
+    try {
+        $campStmt = db()->query("SELECT id FROM campaigns WHERE status = 1 LIMIT 1");
+        $campRow = $campStmt ? $campStmt->fetch() : null;
+        if ($campRow) {
+            $campaignFilter = " AND campaign_id = " . (int)$campRow['id'];
+        }
+    } catch (Throwable $e) {
+        // campaigns table may not exist yet — sync all
+    }
+
     $sql = "SELECT id, domain_id, name, email, ma
             FROM emails
             WHERE (ma IS NULL OR ma = 0)
-              AND email IS NOT NULL AND email <> ''
+              AND email IS NOT NULL AND email <> ''" . $campaignFilter . "
             ORDER BY id ASC
             LIMIT :lim";
     $stmt = db()->prepare($sql);
