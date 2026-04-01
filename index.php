@@ -131,7 +131,12 @@ $acceptRate = ($totalEmailsFound + $totalRejected) > 0 ? round($totalEmailsFound
         <div class="col-lg-6">
             <div class="card">
                 <div class="card-body">
-                    <h3 class="mb-3">Automated Tasks</h3>
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <h3 class="mb-0">Automated Tasks</h3>
+                        <button type="button" class="btn btn-sm btn-outline-danger" id="stopAllBtn" onclick="stopAllProcesses()">
+                            <i class="fas fa-stop-circle me-1"></i>Stop All
+                        </button>
+                    </div>
                     <p class="text-muted mb-3">Trigger background processes for data acquisition.</p>
                     <div class="row g-3">
                         <div class="col-6">
@@ -507,6 +512,30 @@ function updateStatus() {
 }
 updateStatus();
 setInterval(updateStatus, 3000);
+
+function stopAllProcesses() {
+    if (!confirm('Stop ALL running processes? This will kill any active crawlers, URL fetchers, and Mautic sync.')) return;
+    var btn = document.getElementById('stopAllBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Stopping...';
+    fetch('stop_all.php', { cache: 'no-store' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-stop-circle me-1"></i>Stop All';
+            if (data.ok) {
+                alert(data.message);
+                updateStatus();
+            } else {
+                alert('Error: ' + (data.error || 'Unknown'));
+            }
+        })
+        .catch(function(e) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-stop-circle me-1"></i>Stop All';
+            alert('Network error');
+        });
+}
 </script>
 </body>
 </html>
