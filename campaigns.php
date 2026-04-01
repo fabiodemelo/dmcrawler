@@ -6,6 +6,30 @@ ob_start();
 include 'auth_check.php';
 include 'db.php';
 
+// Auto-create group tables if missing
+$conn->query("CREATE TABLE IF NOT EXISTS keyword_groups (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+$conn->query("CREATE TABLE IF NOT EXISTS campaign_keyword_groups (
+    campaign_id INT NOT NULL,
+    group_id INT NOT NULL,
+    PRIMARY KEY (campaign_id, group_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+$conn->query("CREATE TABLE IF NOT EXISTS location_groups (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+$conn->query("CREATE TABLE IF NOT EXISTS campaign_location_groups (
+    campaign_id INT NOT NULL,
+    group_id INT NOT NULL,
+    PRIMARY KEY (campaign_id, group_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
 // Auto-create campaigns table + columns if missing
 $conn->query("CREATE TABLE IF NOT EXISTS campaigns (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -26,6 +50,32 @@ foreach (['campaign_id' => 'INT NULL', 'source_keyword' => 'VARCHAR(255) NULL', 
             @$conn->query("ALTER TABLE `{$_tbl}` ADD COLUMN `{$_col}` {$_def}");
         }
     }
+}
+
+// Handle AJAX group toggle
+if (isset($_GET['ajax']) && $_GET['ajax'] === 'toggle_group') {
+    header('Content-Type: application/json');
+    $campaignId = (int)($_POST['campaign_id'] ?? 0);
+    $groupId = (int)($_POST['group_id'] ?? 0);
+    $groupType = $_POST['group_type'] ?? '';
+    $action = $_POST['toggle_action'] ?? '';
+
+    if ($campaignId > 0 && $groupId > 0 && in_array($groupType, ['keyword', 'location']) && in_array($action, ['add', 'remove'])) {
+        $table = $groupType === 'keyword' ? 'campaign_keyword_groups' : 'campaign_location_groups';
+        if ($action === 'add') {
+            $stmt = $conn->prepare("INSERT IGNORE INTO {$table} (campaign_id, group_id) VALUES (?, ?)");
+            $stmt->bind_param('ii', $campaignId, $groupId);
+            $stmt->execute();
+            $stmt->close();
+        } else {
+            $stmt = $conn->prepare("DELETE FROM {$table} WHERE campaign_id = ? AND group_id = ?");
+            $stmt->bind_param('ii', $campaignId, $groupId);
+            $stmt->execute();
+            $stmt->close();
+        }
+        die(json_encode(['ok' => true]));
+    }
+    die(json_encode(['ok' => false, 'error' => 'Invalid params']));
 }
 
 function redirect_self(array $params = []): void {
@@ -142,6 +192,24 @@ $activeCampaign = null;
 foreach ($campaigns as $c) {
     if ((int)$c['status'] === 1) { $activeCampaign = $c; break; }
 }
+
+// Fetch keyword groups and location groups
+$keywordGroups = [];
+$res = $conn->query("SELECT * FROM keyword_groups ORDER BY name ASC");
+if ($res) { while ($row = $res->fetch_assoc()) $keywordGroups[] = $row; }
+
+$locationGroups = [];
+$res = $conn->query("SELECT * FROM location_groups ORDER BY name ASC");
+if ($res) { while ($row = $res->fetch_assoc()) $locationGroups[] = $row; }
+
+// Fetch assigned groups per campaign
+$campaignKwGroups = [];
+$res = $conn->query("SELECT campaign_id, group_id FROM campaign_keyword_groups");
+if ($res) { while ($row = $res->fetch_assoc()) $campaignKwGroups[(int)$row['campaign_id']][] = (int)$row['group_id']; }
+
+$campaignLocGroups = [];
+$res = $conn->query("SELECT campaign_id, group_id FROM campaign_location_groups");
+if ($res) { while ($row = $res->fetch_assoc()) $campaignLocGroups[(int)$row['campaign_id']][] = (int)$row['group_id']; }
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -264,9 +332,123 @@ foreach ($campaigns as $c) {
             </tbody>
         </table>
     </div>
+
+    <?php if (!empty($campaigns) && (!empty($keywordGroups) || !empty($locationGroups))): ?>
+    <h3 class="mt-5 mb-3">Assign Groups to Campaigns</h3>
+    <p class="text-muted mb-4">Toggle which keyword and location groups belong to each campaign. When getURLS runs, only keywords/locations from groups assigned to the active campaign will be used.</p>
+
+    <?php foreach ($campaigns as $camp): ?>
+    <div class="card mb-3">
+        <div class="card-body">
+            <h4 class="mb-3">
+                <?= htmlspecialchars($camp['name']) ?>
+                <?php if ((int)$camp['status'] === 1): ?>
+                <span class="badge bg-success ms-2">Active</span>
+                <?php endif; ?>
+            </h4>
+            <div class="row">
+                <?php if (!empty($keywordGroups)): ?>
+                <div class="col-md-6">
+                    <h6 class="text-muted mb-2"><i class="fas fa-key me-1"></i>Keyword Groups</h6>
+                    <div class="d-flex flex-wrap gap-2">
+                        <?php
+                        $assignedKw = $campaignKwGroups[(int)$camp['id']] ?? [];
+                        foreach ($keywordGroups as $kg):
+                            $isAssigned = in_array((int)$kg['id'], $assignedKw);
+                        ?>
+                        <button type="button"
+                                class="btn btn-sm group-toggle <?= $isAssigned ? 'btn-primary' : 'btn-outline-secondary' ?>"
+                                data-campaign-id="<?= $camp['id'] ?>"
+                                data-group-id="<?= $kg['id'] ?>"
+                                data-group-type="keyword"
+                                data-assigned="<?= $isAssigned ? '1' : '0' ?>">
+                            <?= htmlspecialchars($kg['name']) ?>
+                        </button>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+                <?php if (!empty($locationGroups)): ?>
+                <div class="col-md-6">
+                    <h6 class="text-muted mb-2"><i class="fas fa-map-marker-alt me-1"></i>Location Groups</h6>
+                    <div class="d-flex flex-wrap gap-2">
+                        <?php
+                        $assignedLoc = $campaignLocGroups[(int)$camp['id']] ?? [];
+                        foreach ($locationGroups as $lg):
+                            $isAssigned = in_array((int)$lg['id'], $assignedLoc);
+                        ?>
+                        <button type="button"
+                                class="btn btn-sm group-toggle <?= $isAssigned ? 'btn-primary' : 'btn-outline-secondary' ?>"
+                                data-campaign-id="<?= $camp['id'] ?>"
+                                data-group-id="<?= $lg['id'] ?>"
+                                data-group-type="location"
+                                data-assigned="<?= $isAssigned ? '1' : '0' ?>">
+                            <?= htmlspecialchars($lg['name']) ?>
+                        </button>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+    <?php endforeach; ?>
+
+    <?php elseif (!empty($campaigns)): ?>
+    <div class="card mt-4">
+        <div class="card-body">
+            <div class="empty-state">
+                <i class="fas fa-layer-group"></i>
+                <h4>No groups yet</h4>
+                <p>Create <a href="keyword_groups.php">keyword groups</a> or <a href="location_groups.php">location groups</a> first, then assign them to campaigns here.</p>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
 </div>
 
 <script data-cfasync="false" src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script data-cfasync="false">
+document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.group-toggle');
+    if (!btn) return;
+
+    var campaignId = btn.dataset.campaignId;
+    var groupId = btn.dataset.groupId;
+    var groupType = btn.dataset.groupType;
+    var isAssigned = btn.dataset.assigned === '1';
+    var action = isAssigned ? 'remove' : 'add';
+
+    btn.disabled = true;
+
+    var form = new FormData();
+    form.append('campaign_id', campaignId);
+    form.append('group_id', groupId);
+    form.append('group_type', groupType);
+    form.append('toggle_action', action);
+
+    fetch('campaigns.php?ajax=toggle_group', { method: 'POST', body: form })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.ok) {
+                if (action === 'add') {
+                    btn.classList.remove('btn-outline-secondary');
+                    btn.classList.add('btn-primary');
+                    btn.dataset.assigned = '1';
+                } else {
+                    btn.classList.remove('btn-primary');
+                    btn.classList.add('btn-outline-secondary');
+                    btn.dataset.assigned = '0';
+                }
+            }
+            btn.disabled = false;
+        })
+        .catch(function(err) {
+            console.error(err);
+            btn.disabled = false;
+        });
+});
+</script>
 </body>
 </html>
 <?php ob_end_flush(); ?>

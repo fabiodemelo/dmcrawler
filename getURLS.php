@@ -515,38 +515,91 @@ function db_insert_domain(string $domain, ?int $campaignId = null, ?string $keyw
 
 /**
  * Fetches active keywords (status = 1) from the `keywords` table.
+ * If a campaign ID is provided and has keyword groups assigned, only returns
+ * keywords belonging to those groups. Falls back to all active keywords otherwise.
+ * @param int|null $campaignId The active campaign ID (or null for all).
  * @return array An array of associative arrays, each containing 'id' and 'keyword'.
  */
-function fetch_active_keywords(): array {
+function fetch_active_keywords(?int $campaignId = null): array {
     $keywords = [];
     try {
-        // Fetch both id and keyword
+        // If campaign has keyword groups assigned, filter by them
+        if ($campaignId !== null) {
+            $checkStmt = db()->prepare("SELECT COUNT(*) FROM `campaign_keyword_groups` WHERE `campaign_id` = ?");
+            $checkStmt->execute([$campaignId]);
+            $hasGroups = (int)$checkStmt->fetchColumn() > 0;
+
+            if ($hasGroups) {
+                $stmt = db()->prepare("
+                    SELECT DISTINCT k.`id`, k.`keyword`
+                    FROM `keywords` k
+                    INNER JOIN `keyword_group_items` kgi ON k.`id` = kgi.`keyword_id`
+                    INNER JOIN `campaign_keyword_groups` ckg ON kgi.`group_id` = ckg.`group_id`
+                    WHERE k.`status` = 1 AND ckg.`campaign_id` = ?
+                ");
+                $stmt->execute([$campaignId]);
+                while ($row = $stmt->fetch()) {
+                    $keywords[] = $row;
+                }
+                log_line("Filtered keywords by campaign #{$campaignId} groups: " . count($keywords) . " keywords found.");
+                return $keywords;
+            }
+        }
+
+        // Fallback: all active keywords
         $stmt = db()->query("SELECT `id`, `keyword` FROM `keywords` WHERE `status` = 1");
         while ($row = $stmt->fetch()) {
-            $keywords[] = $row; // Store as associative array { 'id': 1, 'keyword': 'Utah' }
+            $keywords[] = $row;
         }
-        return $keywords; // Always return an array
+        return $keywords;
     } catch (Throwable $e) {
         report_error("Failed to fetch active keywords from DB: " . $e->getMessage());
-        return []; // Return empty array on error
+        return [];
     }
 }
 
 /**
  * Fetches active locations (status = 1) from the `locations` table.
+ * If a campaign ID is provided and has location groups assigned, only returns
+ * locations belonging to those groups. Falls back to all active locations otherwise.
+ * @param int|null $campaignId The active campaign ID (or null for all).
  * @return array An array of associative arrays, each containing 'id' and 'name'.
  */
-function fetch_active_locations(): array {
+function fetch_active_locations(?int $campaignId = null): array {
     $locations = [];
     try {
+        // If campaign has location groups assigned, filter by them
+        if ($campaignId !== null) {
+            $checkStmt = db()->prepare("SELECT COUNT(*) FROM `campaign_location_groups` WHERE `campaign_id` = ?");
+            $checkStmt->execute([$campaignId]);
+            $hasGroups = (int)$checkStmt->fetchColumn() > 0;
+
+            if ($hasGroups) {
+                $stmt = db()->prepare("
+                    SELECT DISTINCT l.`id`, l.`name`
+                    FROM `locations` l
+                    INNER JOIN `location_group_items` lgi ON l.`id` = lgi.`location_id`
+                    INNER JOIN `campaign_location_groups` clg ON lgi.`group_id` = clg.`group_id`
+                    WHERE l.`status` = 1 AND clg.`campaign_id` = ?
+                ");
+                $stmt->execute([$campaignId]);
+                while ($row = $stmt->fetch()) {
+                    $locations[] = $row;
+                }
+                log_line("Filtered locations by campaign #{$campaignId} groups: " . count($locations) . " locations found.");
+                return $locations;
+            }
+        }
+
+        // Fallback: all active locations
         $stmt = db()->query("SELECT `id`, `name` FROM `locations` WHERE `status` = 1");
         while ($row = $stmt->fetch()) {
             $locations[] = $row;
         }
-        return $locations; // Always return an array
+        return $locations;
     } catch (Throwable $e) {
         report_error("Failed to fetch active locations from DB: " . $e->getMessage());
-        return []; // Return empty array on error
+        return [];
     }
 }
 
@@ -664,29 +717,7 @@ try {
     $existingDomains = []; // Ensure it's an array even if loading fails
 }
 
-// Fetch active keywords from the database
-$KEYWORDS = fetch_active_keywords();
-if (empty($KEYWORDS)) {
-    report_error("No active keywords found in the database. Please add keywords with status = 1.");
-    exit(1); // Exit if nothing to search for
-}
-
-// Fetch active locations from the database
-$LOCATIONS = fetch_active_locations();
-if (empty($LOCATIONS)) {
-    report_error("No active locations found in the database. Please add locations with status = 1.");
-    exit(1); // Exit if no locations to search for
-}
-
-
-// Fetch active engines from the database
-$ENGINES = fetch_active_engines();
-if (empty($ENGINES)) {
-    report_error("No active engines found in the database. Please add engines with status = 1.");
-    exit(1); // Exit if no engines to search with
-}
-
-// Fetch active campaign
+// Fetch active campaign (must be before keywords/locations so we can filter by campaign groups)
 $ACTIVE_CAMPAIGN = null;
 try {
     $campStmt = db()->query("SELECT id, name FROM campaigns WHERE status = 1 LIMIT 1");
@@ -696,6 +727,29 @@ try {
 }
 if (!$ACTIVE_CAMPAIGN) {
     log_line("WARNING: No active campaign found. Domains will be inserted without campaign tracking.");
+}
+
+$activeCampaignId = $ACTIVE_CAMPAIGN ? (int)$ACTIVE_CAMPAIGN['id'] : null;
+
+// Fetch active keywords — filtered by campaign groups if assigned
+$KEYWORDS = fetch_active_keywords($activeCampaignId);
+if (empty($KEYWORDS)) {
+    report_error("No active keywords found for the current campaign. Check keyword groups assignment.");
+    exit(1);
+}
+
+// Fetch active locations — filtered by campaign groups if assigned
+$LOCATIONS = fetch_active_locations($activeCampaignId);
+if (empty($LOCATIONS)) {
+    report_error("No active locations found for the current campaign. Check location groups assignment.");
+    exit(1);
+}
+
+// Fetch active engines from the database
+$ENGINES = fetch_active_engines();
+if (empty($ENGINES)) {
+    report_error("No active engines found in the database. Please add engines with status = 1.");
+    exit(1);
 }
 
 // Retrieve the configured cooldown period

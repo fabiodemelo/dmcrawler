@@ -17,7 +17,13 @@
                     <a class="nav-link <?= $current_page === 'keywords.php' ? 'active' : '' ?>" href="keywords.php"><i class="fas fa-key"></i>Keywords</a>
                 </li>
                 <li class="nav-item">
+                    <a class="nav-link <?= $current_page === 'keyword_groups.php' ? 'active' : '' ?>" href="keyword_groups.php"><i class="fas fa-layer-group"></i>KW Groups</a>
+                </li>
+                <li class="nav-item">
                     <a class="nav-link <?= $current_page === 'locations.php' ? 'active' : '' ?>" href="locations.php"><i class="fas fa-map-marker-alt"></i>Locations</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link <?= $current_page === 'location_groups.php' ? 'active' : '' ?>" href="location_groups.php"><i class="fas fa-layer-group"></i>Loc Groups</a>
                 </li>
                 <li class="nav-item">
                     <a class="nav-link <?= $current_page === 'engines.php' ? 'active' : '' ?>" href="engines.php"><i class="fas fa-search"></i>Engines</a>
