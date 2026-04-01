@@ -505,11 +505,11 @@ function get_seed_domains(int $limit = 15): array {
  * @return bool True on successful insertion.
  * @throws PDOException On database errors.
  */
-function db_insert_domain(string $domain): bool {
-    $sql = "INSERT INTO `domains` (`id`, `domain`, `crawled`, `date_added`, `date_crawled`, `emails_found`, `urls_crawled`)
-            VALUES (NULL, :d, 0, CURRENT_TIMESTAMP, NULL, 0, 0)";
+function db_insert_domain(string $domain, ?int $campaignId = null, ?string $keyword = null, ?string $location = null): bool {
+    $sql = "INSERT INTO `domains` (`id`, `domain`, `crawled`, `date_added`, `date_crawled`, `emails_found`, `urls_crawled`, `campaign_id`, `source_keyword`, `source_location`)
+            VALUES (NULL, :d, 0, CURRENT_TIMESTAMP, NULL, 0, 0, :cid, :kw, :loc)";
     $stmt = db()->prepare($sql);
-    $stmt->execute([':d' => $domain]);
+    $stmt->execute([':d' => $domain, ':cid' => $campaignId, ':kw' => $keyword, ':loc' => $location]);
     return true;
 }
 
@@ -686,6 +686,18 @@ if (empty($ENGINES)) {
     exit(1); // Exit if no engines to search with
 }
 
+// Fetch active campaign
+$ACTIVE_CAMPAIGN = null;
+try {
+    $campStmt = db()->query("SELECT id, name FROM campaigns WHERE status = 1 LIMIT 1");
+    $ACTIVE_CAMPAIGN = $campStmt ? $campStmt->fetch() : null;
+} catch (Throwable $e) {
+    // campaigns table may not exist yet — proceed without
+}
+if (!$ACTIVE_CAMPAIGN) {
+    log_line("WARNING: No active campaign found. Domains will be inserted without campaign tracking.");
+}
+
 // Retrieve the configured cooldown period
 $SERP_COOLDOWN_HOURS = get_serp_cooldown_hours();
 
@@ -702,9 +714,9 @@ try {
  * Executes a single search query against SerpAPI and inserts new domains.
  * Returns the number of new domains inserted.
  */
-function execute_search(string $engine_name, string $query, string $label, int $maxResults, array &$existingDomains, array &$seenThisRun): int {
+function execute_search(string $engine_name, string $query, string $label, int $maxResults, array &$existingDomains, array &$seenThisRun, ?string $keyword = null, ?string $location = null): int {
     global $RESULTS_PER_LOCATION, $MAX_PAGES, $OVERFETCH_FACTOR, $EXCLUDE_DOMAINS, $EXCLUDE_TLDS;
-    global $totalInserted, $errors, $fp;
+    global $totalInserted, $errors, $fp, $ACTIVE_CAMPAIGN;
 
     if (empty($query)) return 0;
 
@@ -748,7 +760,8 @@ function execute_search(string $engine_name, string $query, string $label, int $
             }
 
             try {
-                if (db_insert_domain($domain_only_name)) {
+                $campId = $ACTIVE_CAMPAIGN ? (int)$ACTIVE_CAMPAIGN['id'] : null;
+                if (db_insert_domain($domain_only_name, $campId, $keyword, $location)) {
                     $existingDomains[$domain_only_name] = true;
                     $seenThisRun[$domain_only_name] = true;
                     $collected++;
@@ -829,7 +842,7 @@ foreach ($ENGINES as $engine_data) {
                 'inserted_so_far' => $totalInserted,
             ]));
 
-            $found = execute_search($engine_name, $query, $label, $RESULTS_PER_LOCATION, $existingDomains, $seenThisRun);
+            $found = execute_search($engine_name, $query, $label, $RESULTS_PER_LOCATION, $existingDomains, $seenThisRun, $keyword_name, $location_name);
             $status = $found > 0 ? 'completed_ok' : 'no_results';
             update_keyword_engine_search_status($keyword_id, $engine_id, $location_id, $status, "Phase 1: found {$found} new domains");
         }
@@ -874,7 +887,7 @@ foreach ($ENGINES as $engine_data) {
                 ]));
 
                 // Lower target for intent queries — they're supplementary
-                execute_search($engine_name, $query, $label, 20, $existingDomains, $seenThisRun);
+                execute_search($engine_name, $query, $label, 20, $existingDomains, $seenThisRun, $keyword_name, $location_name);
                 usleep(500000); // Extra delay between intent queries
             }
         }
@@ -911,7 +924,7 @@ if (empty($seedDomains)) {
                 'inserted_so_far' => $totalInserted,
             ]));
 
-            execute_search($engine_name, $query, $label, 10, $existingDomains, $seenThisRun);
+            execute_search($engine_name, $query, $label, 10, $existingDomains, $seenThisRun, null, null);
             usleep(500000);
         }
     }

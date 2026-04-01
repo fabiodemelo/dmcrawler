@@ -87,8 +87,9 @@ $orderDir = isset($_GET['orderDir']) && in_array(strtoupper($_GET['orderDir']), 
 
 // New column filters
 $filterDomain = isset($_GET['filter_domain']) ? $conn->real_escape_string($_GET['filter_domain']) : '';
-$filterEmail  = isset($_GET['filter_email'])  ? $conn->real_escape_string($_GET['filter_email'])  : ''; // This filter is not used in the UI, but kept for consistency
+$filterEmail  = isset($_GET['filter_email'])  ? $conn->real_escape_string($_GET['filter_email'])  : '';
 $filterMa     = isset($_GET['filter_ma']) && in_array($_GET['filter_ma'], ['mautic', 'scheduled', 'failed']) ? $_GET['filter_ma'] : '';
+$filterCampaign = isset($_GET['filter_campaign']) ? $conn->real_escape_string($_GET['filter_campaign']) : '';
 
 // Whitelist orderBy columns
 $valid_order_columns = ['id', 'd.domain', 'e.name', 'e.email', 'e.created_at', 'e.ma'];
@@ -121,12 +122,16 @@ if ($filterEmail !== '') {
 }
 if ($filterMa !== '') {
     if ($filterMa === 'mautic') {
-        $columnWhereClauses[] = "e.ma IS NOT NULL AND e.ma > 0"; // ma > 0 indicates synced with Mautic ID
+        $columnWhereClauses[] = "e.ma IS NOT NULL AND e.ma > 0";
     } elseif ($filterMa === 'scheduled') {
-        $columnWhereClauses[] = "e.ma IS NULL OR e.ma = 0"; // ma is NULL or 0 indicates pending/not synced
-    } elseif ($filterMa === 'failed') { // New filter option for failed attempts
-        $columnWhereClauses[] = "e.ma < 0"; // Negative ma could indicate a failed attempt
+        $columnWhereClauses[] = "e.ma IS NULL OR e.ma = 0";
+    } elseif ($filterMa === 'failed') {
+        $columnWhereClauses[] = "e.ma < 0";
     }
+}
+if ($filterCampaign !== '') {
+    $escapedCampaign = $conn->real_escape_string($filterCampaign);
+    $columnWhereClauses[] = "e.campaign_id = '{$escapedCampaign}'";
 }
 
 $whereClauses = array_merge($baseWhereClauses, $columnWhereClauses);
@@ -144,9 +149,10 @@ if ($totalCountResult) {
 $totalPages = ceil($totalEmails / $itemsPerPage);
 
 // Fetch emails from the database
-$query = "SELECT e.id, d.domain, e.name, e.email, e.created_at, e.ma
+$query = "SELECT e.id, d.domain, e.name, e.email, e.created_at, e.ma, e.campaign_id, e.source_keyword, e.source_location, c.name AS campaign_name
           FROM emails e
           JOIN domains d ON e.domain_id = d.id
+          LEFT JOIN campaigns c ON e.campaign_id = c.id
           {$whereSql}
           ORDER BY {$orderBy} {$orderDir}
           LIMIT {$itemsPerPage} OFFSET {$offset}"; // Added LIMIT and OFFSET
@@ -170,6 +176,7 @@ if ($countRes && ($c = $countRes->fetch_assoc())) {
 
 // Distinct options for header filters (based on base filters like time/search)
 $domainsRes = $conn->query("SELECT DISTINCT d.domain FROM emails e JOIN domains d ON e.domain_id = d.id {$whereSqlOptions} ORDER BY d.domain ASC");
+$campaignsRes = $conn->query("SELECT id, name FROM campaigns ORDER BY name ASC");
 
 // Helper function to generate sort links
 function sort_link($column, $text, $currentOrderBy, $currentOrderDir) {
@@ -237,6 +244,7 @@ function sort_link($column, $text, $currentOrderBy, $currentOrderDir) {
                 <input type="hidden" name="filter_domain" value="<?= htmlspecialchars($filterDomain) ?>">
                 <input type="hidden" name="filter_email" value="<?= htmlspecialchars($filterEmail) ?>">
                 <input type="hidden" name="filter_ma" value="<?= htmlspecialchars($filterMa) ?>">
+                <input type="hidden" name="filter_campaign" value="<?= htmlspecialchars($filterCampaign) ?>">
             </form>
         </div>
     </div>
@@ -265,7 +273,7 @@ function sort_link($column, $text, $currentOrderBy, $currentOrderDir) {
         <div class="d-flex gap-2">
             <a href="export.php?<?= http_build_query([
                     'filter' => $filter, 'search' => $search, 'filter_domain' => $filterDomain,
-                    'filter_email' => $filterEmail, 'filter_ma' => $filterMa
+                    'filter_email' => $filterEmail, 'filter_ma' => $filterMa, 'filter_campaign' => $filterCampaign
             ]) ?>" class="btn btn-success"><i class="fas fa-download me-2"></i>Export CSV</a>
             <a href="verifyemail.php" class="btn btn-outline-secondary"><i class="fas fa-check-double me-2"></i>Verify Emails</a>
         </div>
@@ -274,8 +282,7 @@ function sort_link($column, $text, $currentOrderBy, $currentOrderDir) {
     <!-- Column Filters and Table -->
     <form method="get" id="headerFiltersForm" class="mb-0">
         <?php foreach ($_GET as $key => $value):
-            // Exclude column filters we're about to define, and also 'page'
-            if (!in_array($key, ['filter_domain', 'filter_email', 'filter_ma', 'msg_type', 'msg_text', 'page'])): ?>
+            if (!in_array($key, ['filter_domain', 'filter_email', 'filter_ma', 'filter_campaign', 'msg_type', 'msg_text', 'page'])): ?>
             <input type="hidden" name="<?= htmlspecialchars($key) ?>" value="<?= htmlspecialchars($value) ?>">
         <?php endif; endforeach; ?>
 
@@ -285,11 +292,21 @@ function sort_link($column, $text, $currentOrderBy, $currentOrderDir) {
                 <tr>
                     <th><?= sort_link('id', 'ID', $orderBy, $orderDir) ?></th>
                     <th>
-                        <select name="filter_domain" class="form-select form-select-sm domain-filter-dropdown" onchange="this.form.submit()"> <!-- Added domain-filter-dropdown class -->
+                        <select name="filter_domain" class="form-select form-select-sm domain-filter-dropdown" onchange="this.form.submit()">
                             <option value="">All Domains</option>
                             <?php if ($domainsRes): while ($rowD = $domainsRes->fetch_assoc()): ?>
                                 <option value="<?= htmlspecialchars($rowD['domain']) ?>" <?= $filterDomain === $rowD['domain'] ? 'selected' : '' ?>>
                                     <?= htmlspecialchars($rowD['domain']) ?>
+                                </option>
+                            <?php endwhile; endif; ?>
+                        </select>
+                    </th>
+                    <th>
+                        <select name="filter_campaign" class="form-select form-select-sm" onchange="this.form.submit()" style="max-width:160px;">
+                            <option value="">All Campaigns</option>
+                            <?php if ($campaignsRes): while ($rowC = $campaignsRes->fetch_assoc()): ?>
+                                <option value="<?= htmlspecialchars($rowC['id']) ?>" <?= $filterCampaign === $rowC['id'] ? 'selected' : '' ?>>
+                                    <?= htmlspecialchars($rowC['name']) ?>
                                 </option>
                             <?php endwhile; endif; ?>
                         </select>
@@ -314,6 +331,19 @@ function sort_link($column, $text, $currentOrderBy, $currentOrderDir) {
                         <tr>
                             <td><?= htmlspecialchars($row['id']) ?></td>
                             <td><?= htmlspecialchars($row['domain']) ?></td>
+                            <td>
+                                <?php
+                                $campName = $row['campaign_name'] ?? '';
+                                $srcKw = $row['source_keyword'] ?? '';
+                                $srcLoc = $row['source_location'] ?? '';
+                                $srcParts = array_filter([$campName, $srcLoc, $srcKw]);
+                                ?>
+                                <?php if (!empty($srcParts)): ?>
+                                    <span class="small"><?= htmlspecialchars(implode(' > ', $srcParts)) ?></span>
+                                <?php else: ?>
+                                    <span class="text-muted small">-</span>
+                                <?php endif; ?>
+                            </td>
                             <td>
                                 <input type="text" form="updateForm_<?= $row['id'] ?>" name="name" class="form-control form-control-sm form-control-sm-inline" value="<?= htmlspecialchars($row['name'] ?? '', ENT_QUOTES) ?>" placeholder="Name">
                             </td>
@@ -350,7 +380,7 @@ function sort_link($column, $text, $currentOrderBy, $currentOrderDir) {
                     <?php endwhile; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="7">
+                        <td colspan="8">
                             <div class="empty-state">
                                 <i class="fas fa-envelope"></i>
                                 <h4>No emails found</h4>

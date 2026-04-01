@@ -23,6 +23,9 @@
                     <a class="nav-link <?= $current_page === 'engines.php' ? 'active' : '' ?>" href="engines.php"><i class="fas fa-search"></i>Engines</a>
                 </li>
                 <li class="nav-item">
+                    <a class="nav-link <?= $current_page === 'campaigns.php' ? 'active' : '' ?>" href="campaigns.php"><i class="fas fa-bullhorn"></i>Campaigns</a>
+                </li>
+                <li class="nav-item">
                     <a class="nav-link <?= $current_page === 'view_emails.php' ? 'active' : '' ?>" href="view_emails.php"><i class="fas fa-envelope"></i>Emails</a>
                 </li>
                 <li class="nav-item">

@@ -442,21 +442,24 @@ function crawl_page(string $url, string $domain, array &$visited, int &$email_co
         // Currently pass-through
 
         // === STAGE 8: Store ===
-        $stmt = $conn->prepare("INSERT INTO emails (domain_id, name, email, confidence_score, confidence_tier, page_url, page_quality_score) VALUES (?, '', ?, ?, ?, ?, ?)");
-        if ($stmt) {
-            $confScore = $conf['score'];
-            $confTier = $conf['tier'];
-            $stmt->bind_param('issisi', $domain_id, $email, $confScore, $confTier, $url, $pageQuality);
-            if ($stmt->execute()) {
-                $email_count++;
-                $page_accepted++;
-                log_activity("ACCEPT ({$conf['tier']}, {$conf['score']}): $email");
-                stream_message("Email: $email [confidence: {$conf['score']}, tier: {$conf['tier']}]");
-            } else {
-                // Might be a duplicate key error if unique constraint fires
-                log_activity("Insert failed for $email: " . $stmt->error);
-            }
-            $stmt->close();
+        $domCampaignId = !empty($row['campaign_id']) ? (int)$row['campaign_id'] : null;
+        $domKeyword = $row['source_keyword'] ?? null;
+        $domLocation = $row['source_location'] ?? null;
+        $eCampaignId = $domCampaignId !== null ? (int)$domCampaignId : 'NULL';
+        $eKeyword = $domKeyword !== null ? "'" . $conn->real_escape_string($domKeyword) . "'" : 'NULL';
+        $eLocation = $domLocation !== null ? "'" . $conn->real_escape_string($domLocation) . "'" : 'NULL';
+        $eEmail = $conn->real_escape_string($email);
+        $eUrl = $conn->real_escape_string($url);
+        $eTier = $conn->real_escape_string($conf['tier']);
+        $insertSql = "INSERT INTO emails (domain_id, name, email, confidence_score, confidence_tier, page_url, page_quality_score, campaign_id, source_keyword, source_location)
+                      VALUES ({$domain_id}, '', '{$eEmail}', {$conf['score']}, '{$eTier}', '{$eUrl}', {$pageQuality}, {$eCampaignId}, {$eKeyword}, {$eLocation})";
+        if ($conn->query($insertSql)) {
+            $email_count++;
+            $page_accepted++;
+            log_activity("ACCEPT ({$conf['tier']}, {$conf['score']}): $email");
+            stream_message("Email: $email [confidence: {$conf['score']}, tier: {$conf['tier']}]");
+        } else {
+            log_activity("Insert failed for $email: " . $conn->error);
         }
     }
 
