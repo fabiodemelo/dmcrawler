@@ -23,6 +23,36 @@ if ($conn) {
 }
 
 $acceptRate = ($totalEmailsFound + $totalRejected) > 0 ? round($totalEmailsFound / ($totalEmailsFound + $totalRejected) * 100) : 100;
+
+// Active campaign summary
+$activeCampaign = null;
+$activeKeywords = [];
+$activeLocations = [];
+$activeKwGroupNames = [];
+$activeLocGroupNames = [];
+
+$res = @$conn->query("SELECT id, name FROM campaigns WHERE status = 1 LIMIT 1");
+if ($res) $activeCampaign = $res->fetch_assoc();
+
+if ($activeCampaign) {
+    $cid = (int)$activeCampaign['id'];
+
+    $res = @$conn->query("SELECT kg.name FROM keyword_groups kg INNER JOIN campaign_keyword_groups ckg ON kg.id = ckg.group_id WHERE ckg.campaign_id = {$cid} ORDER BY kg.name");
+    if ($res) { while ($r = $res->fetch_assoc()) $activeKwGroupNames[] = $r['name']; }
+
+    if (!empty($activeKwGroupNames)) {
+        $res = $conn->query("SELECT DISTINCT k.keyword FROM keywords k INNER JOIN keyword_group_items kgi ON k.id = kgi.keyword_id INNER JOIN campaign_keyword_groups ckg ON kgi.group_id = ckg.group_id WHERE k.status = 1 AND ckg.campaign_id = {$cid} ORDER BY k.keyword");
+        if ($res) { while ($r = $res->fetch_assoc()) $activeKeywords[] = $r['keyword']; }
+    }
+
+    $res = @$conn->query("SELECT lg.name FROM location_groups lg INNER JOIN campaign_location_groups clg ON lg.id = clg.group_id WHERE clg.campaign_id = {$cid} ORDER BY lg.name");
+    if ($res) { while ($r = $res->fetch_assoc()) $activeLocGroupNames[] = $r['name']; }
+
+    if (!empty($activeLocGroupNames)) {
+        $res = $conn->query("SELECT DISTINCT l.name FROM locations l INNER JOIN location_group_items lgi ON l.id = lgi.location_id INNER JOIN campaign_location_groups clg ON lgi.group_id = clg.group_id WHERE l.status = 1 AND clg.campaign_id = {$cid} ORDER BY l.name");
+        if ($res) { while ($r = $res->fetch_assoc()) $activeLocations[] = $r['name']; }
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -42,6 +72,41 @@ $acceptRate = ($totalEmailsFound + $totalRejected) > 0 ? round($totalEmailsFound
     <div class="page-header">
         <h1>Dashboard</h1>
         <p>Overview of your crawling system and email extraction pipeline.</p>
+    </div>
+
+    <!-- Active Campaign Summary -->
+    <div class="card mb-4" style="border-color:#166534; background:rgba(22,101,52,0.15);">
+        <div class="card-body">
+            <h4 class="mb-3"><i class="fas fa-bullseye me-2" style="color:#22c55e;"></i>Active Campaign</h4>
+            <?php if ($activeCampaign): ?>
+            <div class="row">
+                <div class="col-md-4">
+                    <h6 class="text-muted mb-2">Campaign</h6>
+                    <span class="badge fs-6" style="background:#166534;"><?= htmlspecialchars($activeCampaign['name']) ?></span>
+                </div>
+                <div class="col-md-4">
+                    <h6 class="text-muted mb-2">Keywords <span class="text-white-50">(<?= count($activeKeywords) ?>)</span></h6>
+                    <?php if (empty($activeKwGroupNames)): ?>
+                        <span class="small" style="color:#86efac;"><i class="fas fa-info-circle me-1"></i>No keyword groups assigned — all active keywords will be used</span>
+                    <?php else: ?>
+                        <div class="mb-1"><?php foreach ($activeKwGroupNames as $gn): ?><span class="badge me-1 mb-1" style="background:#166534;"><?= htmlspecialchars($gn) ?></span><?php endforeach; ?></div>
+                        <div class="d-flex flex-wrap gap-1"><?php foreach ($activeKeywords as $kw): ?><span class="badge bg-dark border border-secondary"><?= htmlspecialchars($kw) ?></span><?php endforeach; ?></div>
+                    <?php endif; ?>
+                </div>
+                <div class="col-md-4">
+                    <h6 class="text-muted mb-2">Locations <span class="text-white-50">(<?= count($activeLocations) ?>)</span></h6>
+                    <?php if (empty($activeLocGroupNames)): ?>
+                        <span class="small" style="color:#86efac;"><i class="fas fa-info-circle me-1"></i>No location groups assigned — all active locations will be used</span>
+                    <?php else: ?>
+                        <div class="mb-1"><?php foreach ($activeLocGroupNames as $gn): ?><span class="badge me-1 mb-1" style="background:#166534;"><?= htmlspecialchars($gn) ?></span><?php endforeach; ?></div>
+                        <div class="d-flex flex-wrap gap-1"><?php foreach ($activeLocations as $loc): ?><span class="badge bg-dark border border-secondary"><?= htmlspecialchars($loc) ?></span><?php endforeach; ?></div>
+                    <?php endif; ?>
+                </div>
+            </div>
+            <?php else: ?>
+            <div style="color:#86efac;"><i class="fas fa-exclamation-triangle me-2"></i>No active campaign. <a href="campaigns.php" style="color:#4ade80;">Activate one here.</a></div>
+            <?php endif; ?>
+        </div>
     </div>
 
     <?php if (isset($_GET['started'])): ?>
