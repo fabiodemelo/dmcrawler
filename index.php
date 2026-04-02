@@ -233,16 +233,66 @@ if ($activeCampaign) {
                         </div>
                         <?php endforeach; ?>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
-                    <!-- Live Activity Box -->
-                    <div id="live-activity-box" class="mt-3" style="display:none;">
-                        <div class="live-activity-card">
-                            <div class="live-activity-header">
-                                <span class="live-pulse"></span>
-                                <span class="live-activity-title" id="live-activity-title">Activity</span>
-                            </div>
-                            <div class="live-activity-body" id="live-activity-body"></div>
+    <!-- Active Campaign + Live Terminal -->
+    <div class="row g-4 mt-0">
+        <!-- Active Campaign -->
+        <div class="col-lg-6">
+            <div class="card h-100" style="border-color:#334155; background:#0f172a;">
+                <div class="card-body">
+                    <h4 class="mb-3" style="color:#e2e8f0;"><i class="fas fa-bullseye me-2" style="color:#22c55e;"></i>Active Campaign</h4>
+                    <?php if ($activeCampaign): ?>
+                    <div class="mb-3">
+                        <h6 style="color:#94a3b8;" class="mb-2">Campaign</h6>
+                        <span class="badge fs-6" style="background:#166534; color:#fff;"><?= htmlspecialchars($activeCampaign['name']) ?></span>
+                    </div>
+                    <div class="mb-3">
+                        <h6 style="color:#94a3b8;" class="mb-2">Keywords <span style="color:#64748b;">(<?= count($activeKeywords) ?>)</span></h6>
+                        <?php if (empty($activeKwGroupNames)): ?>
+                            <span class="small" style="color:#94a3b8;"><i class="fas fa-info-circle me-1" style="color:#22c55e;"></i>No keyword groups assigned — all active keywords will be used</span>
+                        <?php else: ?>
+                            <div class="mb-1"><?php foreach ($activeKwGroupNames as $gn): ?><span class="badge me-1 mb-1" style="background:#166534; color:#fff;"><?= htmlspecialchars($gn) ?></span><?php endforeach; ?></div>
+                            <div class="d-flex flex-wrap gap-1"><?php foreach ($activeKeywords as $kw): ?><span class="badge" style="background:#1e293b; border:1px solid #475569; color:#e2e8f0;"><?= htmlspecialchars($kw) ?></span><?php endforeach; ?></div>
+                        <?php endif; ?>
+                    </div>
+                    <div>
+                        <h6 style="color:#94a3b8;" class="mb-2">Locations <span style="color:#64748b;">(<?= count($activeLocations) ?>)</span></h6>
+                        <?php if (empty($activeLocGroupNames)): ?>
+                            <span class="small" style="color:#94a3b8;"><i class="fas fa-info-circle me-1" style="color:#22c55e;"></i>No location groups assigned — all active locations will be used</span>
+                        <?php else: ?>
+                            <div class="mb-1"><?php foreach ($activeLocGroupNames as $gn): ?><span class="badge me-1 mb-1" style="background:#166534; color:#fff;"><?= htmlspecialchars($gn) ?></span><?php endforeach; ?></div>
+                            <div class="d-flex flex-wrap gap-1"><?php foreach ($activeLocations as $loc): ?><span class="badge" style="background:#1e293b; border:1px solid #475569; color:#e2e8f0;"><?= htmlspecialchars($loc) ?></span><?php endforeach; ?></div>
+                        <?php endif; ?>
+                    </div>
+                    <?php else: ?>
+                    <div style="color:#94a3b8;"><i class="fas fa-exclamation-triangle me-2" style="color:#22c55e;"></i>No active campaign. <a href="campaigns.php" style="color:#4ade80;">Activate one here.</a></div>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+
+        <!-- Live Terminal -->
+        <div class="col-lg-6">
+            <div class="card h-100" style="border-color:#334155; background:#0b1220;">
+                <div class="card-body d-flex flex-column p-0">
+                    <div class="d-flex align-items-center justify-content-between px-3 py-2" style="background:rgba(37,99,235,0.1); border-bottom:1px solid rgba(37,99,235,0.15);">
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="live-pulse" id="terminal-pulse"></span>
+                            <span style="font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:rgba(255,255,255,0.5);">Live Terminal</span>
                         </div>
+                        <a href="live.php" class="btn btn-sm btn-outline-primary py-0 px-2" style="font-size:0.7rem;"><i class="fas fa-expand me-1"></i>Full View</a>
+                    </div>
+                    <div id="terminal-output" style="flex:1; min-height:280px; max-height:400px; overflow-y:auto; padding:12px 14px; font-family:ui-monospace,'Menlo','Consolas',monospace; font-size:0.8rem; color:#d9f99d; line-height:1.6;">
+                        <div id="terminal-idle" style="color:#475569; text-align:center; padding-top:60px;">
+                            <i class="fas fa-terminal" style="font-size:2rem; margin-bottom:10px; display:block;"></i>
+                            <div>Waiting for activity...</div>
+                            <div style="font-size:0.7rem; margin-top:4px;">Start a task above to see live output here</div>
+                        </div>
+                        <div id="terminal-lines"></div>
                     </div>
                 </div>
             </div>
@@ -251,20 +301,6 @@ if ($activeCampaign) {
 </div>
 
 <style>
-.live-activity-card {
-    background: linear-gradient(135deg, #0f172a, #1e293b);
-    border-radius: var(--radius-sm);
-    border: 1px solid rgba(37,99,235,0.3);
-    overflow: hidden;
-}
-.live-activity-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 0.6rem 1rem;
-    background: rgba(37,99,235,0.1);
-    border-bottom: 1px solid rgba(37,99,235,0.15);
-}
 .live-pulse {
     width: 8px;
     height: 8px;
@@ -272,41 +308,6 @@ if ($activeCampaign) {
     background: #16a34a;
     animation: pulse 1.5s ease-in-out infinite;
     flex-shrink: 0;
-}
-.live-activity-title {
-    font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: rgba(255,255,255,0.5);
-}
-.live-activity-body {
-    padding: 0.85rem 1rem;
-    font-family: ui-monospace, 'Menlo', 'Consolas', monospace;
-    font-size: 0.85rem;
-    color: #d9f99d;
-    line-height: 1.5;
-}
-.live-activity-body .la-engine {
-    color: #60a5fa;
-    font-weight: 700;
-}
-.live-activity-body .la-location {
-    color: #f59e0b;
-    font-weight: 700;
-}
-.live-activity-body .la-keyword {
-    color: #34d399;
-    font-weight: 700;
-}
-.live-activity-body .la-domain {
-    color: #a78bfa;
-    font-weight: 700;
-}
-.live-activity-body .la-stat {
-    color: rgba(255,255,255,0.6);
-    font-size: 0.8rem;
-    margin-top: 4px;
 }
 </style>
 
@@ -475,57 +476,89 @@ function timeAgo(dateStr) {
     return Math.floor(diff / 86400) + 'd ago';
 }
 
-function showLiveActivity(live) {
-    var box = document.getElementById('live-activity-box');
-    var title = document.getElementById('live-activity-title');
-    var body = document.getElementById('live-activity-body');
-    if (!box || !body) return;
+var _terminalLines = [];
+var _terminalMaxLines = 100;
+var _lastTerminalState = '';
 
+function terminalAppend(line) {
+    _terminalLines.push(line);
+    if (_terminalLines.length > _terminalMaxLines) _terminalLines.shift();
+    renderTerminal();
+}
+
+function renderTerminal() {
+    var idle = document.getElementById('terminal-idle');
+    var lines = document.getElementById('terminal-lines');
+    var output = document.getElementById('terminal-output');
+    var pulse = document.getElementById('terminal-pulse');
+    if (!lines || !output) return;
+
+    if (_terminalLines.length === 0) {
+        if (idle) idle.style.display = '';
+        lines.innerHTML = '';
+        if (pulse) pulse.style.animationPlayState = 'paused';
+        return;
+    }
+
+    if (idle) idle.style.display = 'none';
+    if (pulse) pulse.style.animationPlayState = 'running';
+    lines.innerHTML = _terminalLines.join('');
+    // Auto-scroll to bottom
+    output.scrollTop = output.scrollHeight;
+}
+
+function showLiveActivity(live) {
     var hasActivity = false;
-    var html = '';
+    var newState = '';
 
     // Search activity (Get URLs)
     if (live.search) {
         hasActivity = true;
         var s = live.search;
         var phaseLabel = s.phase ? 'P' + s.phase : '';
-        var phaseIcon = s.phase === 3 ? 'fa-project-diagram' : (s.phase === 2 ? 'fa-bullseye' : 'fa-search');
         var phaseColor = s.phase === 3 ? '#a78bfa' : (s.phase === 2 ? '#f59e0b' : '#60a5fa');
-        html += '<div style="margin-bottom:8px;">';
-        html += '<i class="fas ' + phaseIcon + '" style="color:' + phaseColor + ';margin-right:6px;"></i>';
-        if (phaseLabel) html += '<span style="color:' + phaseColor + ';font-weight:700;font-size:0.75rem;margin-right:6px;">' + phaseLabel + '</span>';
-        html += 'Searching <span class="la-engine">' + s.engine + '</span>';
-        html += ' in <span class="la-location">' + s.location + '</span>';
-        html += ' for <span class="la-keyword">' + s.keyword + '</span>';
-        if (s.query) html += '<div style="color:rgba(255,255,255,0.35);font-size:0.75rem;margin-top:2px;word-break:break-all;">' + s.query + '</div>';
-        html += '<div class="la-stat">' + (s.inserted_so_far || 0) + ' domains found so far</div>';
-        html += '</div>';
+        newState = 'search:' + (s.engine||'') + ':' + (s.keyword||'') + ':' + (s.location||'') + ':' + (s.inserted_so_far||0) + ':' + (s.phase||'');
+
+        if (newState !== _lastTerminalState) {
+            var ts = new Date().toLocaleTimeString();
+            var line = '<div><span style="color:#475569;">[' + ts + ']</span> ';
+            if (phaseLabel) line += '<span style="color:' + phaseColor + ';font-weight:700;">' + phaseLabel + '</span> ';
+            line += '<span style="color:#60a5fa;">' + (s.engine||'') + '</span> ';
+            line += '<span style="color:#f59e0b;">' + (s.location||'') + '</span> ';
+            line += '<span style="color:#34d399;">' + (s.keyword||'') + '</span>';
+            line += ' <span style="color:#64748b;">(' + (s.inserted_so_far||0) + ' domains)</span>';
+            if (s.query) line += '<div style="color:#334155;font-size:0.7rem;margin-left:60px;">q: ' + s.query + '</div>';
+            line += '</div>';
+            terminalAppend(line);
+            _lastTerminalState = newState;
+        }
     }
 
     // Crawl activity
     if (live.crawl) {
         hasActivity = true;
         var c = live.crawl;
-        html += '<div>';
-        html += '<i class="fas fa-spider" style="color:#a78bfa;margin-right:6px;"></i>';
-        html += 'Crawling <span class="la-domain">' + c.domain + '</span>';
-        if (c.pages !== undefined) {
-            html += '<div class="la-stat">';
-            html += 'Pages: ' + c.pages + (c.budget ? '/' + c.budget : '');
-            html += ' &bull; Emails: ' + (c.emails || 0);
-            html += ' &bull; Rejected: ' + (c.rejected || 0);
-            if (c.quality && c.quality !== '?') html += ' &bull; Quality: ' + c.quality;
-            html += '</div>';
+        newState = 'crawl:' + (c.domain||'') + ':' + (c.pages||0) + ':' + (c.emails||0);
+
+        if (newState !== _lastTerminalState) {
+            var ts = new Date().toLocaleTimeString();
+            var line = '<div><span style="color:#475569;">[' + ts + ']</span> ';
+            line += '<span style="color:#a78bfa;font-weight:700;">CRAWL</span> ';
+            line += '<span style="color:#c084fc;">' + (c.domain||'') + '</span>';
+            line += ' <span style="color:#64748b;">pages:' + (c.pages||0);
+            if (c.budget) line += '/' + c.budget;
+            line += ' emails:' + (c.emails||0);
+            line += ' rejected:' + (c.rejected||0);
+            line += '</span></div>';
+            terminalAppend(line);
+            _lastTerminalState = newState;
         }
-        html += '</div>';
     }
 
-    if (hasActivity) {
-        title.textContent = 'Live Activity';
-        body.innerHTML = html;
-        box.style.display = 'block';
-    } else {
-        box.style.display = 'none';
+    if (!hasActivity && _lastTerminalState !== '' && _lastTerminalState !== 'idle') {
+        var ts = new Date().toLocaleTimeString();
+        terminalAppend('<div><span style="color:#475569;">[' + ts + ']</span> <span style="color:#64748b;">All processes idle</span></div>');
+        _lastTerminalState = 'idle';
     }
 }
 
@@ -571,43 +604,6 @@ function stopAllProcesses() {
         });
 }
 </script>
-
-<!-- Active Campaign Summary -->
-<div class="container-fluid px-4 mb-4">
-    <div class="card" style="border-color:#334155; background:#0f172a;">
-        <div class="card-body">
-            <h4 class="mb-3" style="color:#e2e8f0;"><i class="fas fa-bullseye me-2" style="color:#22c55e;"></i>Active Campaign</h4>
-            <?php if ($activeCampaign): ?>
-            <div class="row">
-                <div class="col-md-4">
-                    <h6 style="color:#94a3b8;" class="mb-2">Campaign</h6>
-                    <span class="badge fs-6" style="background:#166534; color:#fff;"><?= htmlspecialchars($activeCampaign['name']) ?></span>
-                </div>
-                <div class="col-md-4">
-                    <h6 style="color:#94a3b8;" class="mb-2">Keywords <span style="color:#64748b;">(<?= count($activeKeywords) ?>)</span></h6>
-                    <?php if (empty($activeKwGroupNames)): ?>
-                        <span class="small" style="color:#94a3b8;"><i class="fas fa-info-circle me-1" style="color:#22c55e;"></i>No keyword groups assigned — all active keywords will be used</span>
-                    <?php else: ?>
-                        <div class="mb-1"><?php foreach ($activeKwGroupNames as $gn): ?><span class="badge me-1 mb-1" style="background:#166534; color:#fff;"><?= htmlspecialchars($gn) ?></span><?php endforeach; ?></div>
-                        <div class="d-flex flex-wrap gap-1"><?php foreach ($activeKeywords as $kw): ?><span class="badge" style="background:#1e293b; border:1px solid #475569; color:#e2e8f0;"><?= htmlspecialchars($kw) ?></span><?php endforeach; ?></div>
-                    <?php endif; ?>
-                </div>
-                <div class="col-md-4">
-                    <h6 style="color:#94a3b8;" class="mb-2">Locations <span style="color:#64748b;">(<?= count($activeLocations) ?>)</span></h6>
-                    <?php if (empty($activeLocGroupNames)): ?>
-                        <span class="small" style="color:#94a3b8;"><i class="fas fa-info-circle me-1" style="color:#22c55e;"></i>No location groups assigned — all active locations will be used</span>
-                    <?php else: ?>
-                        <div class="mb-1"><?php foreach ($activeLocGroupNames as $gn): ?><span class="badge me-1 mb-1" style="background:#166534; color:#fff;"><?= htmlspecialchars($gn) ?></span><?php endforeach; ?></div>
-                        <div class="d-flex flex-wrap gap-1"><?php foreach ($activeLocations as $loc): ?><span class="badge" style="background:#1e293b; border:1px solid #475569; color:#e2e8f0;"><?= htmlspecialchars($loc) ?></span><?php endforeach; ?></div>
-                    <?php endif; ?>
-                </div>
-            </div>
-            <?php else: ?>
-            <div style="color:#94a3b8;"><i class="fas fa-exclamation-triangle me-2" style="color:#22c55e;"></i>No active campaign. <a href="campaigns.php" style="color:#4ade80;">Activate one here.</a></div>
-            <?php endif; ?>
-        </div>
-    </div>
-</div>
 
 </body>
 </html>
