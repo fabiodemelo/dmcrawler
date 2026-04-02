@@ -127,40 +127,112 @@ function ensure_dir(string $dir): void {
 // ================== SEARCH QUERY BUILDING (3-Phase Strategy) ==================
 
 /**
+ * Detects the language code for a location based on country mapping.
+ * Returns 'pt' for Brazil, 'es' for Spanish countries, etc. Defaults to 'en'.
+ */
+function detect_location_language(string $location): string {
+    $langMap = [
+        'brasil' => 'pt', 'brazil' => 'pt', 'portugal' => 'pt',
+        'mexico' => 'es', 'méxico' => 'es', 'argentina' => 'es', 'chile' => 'es',
+        'colombia' => 'es', 'peru' => 'es', 'perú' => 'es', 'spain' => 'es', 'españa' => 'es',
+        'uruguay' => 'es', 'paraguay' => 'es', 'ecuador' => 'es', 'venezuela' => 'es',
+        'costa rica' => 'es', 'panama' => 'es', 'bolivia' => 'es', 'guatemala' => 'es',
+        'honduras' => 'es', 'el salvador' => 'es', 'nicaragua' => 'es', 'cuba' => 'es',
+        'dominican republic' => 'es', 'puerto rico' => 'es',
+        'france' => 'fr', 'morocco' => 'fr', 'belgium' => 'fr',
+        'germany' => 'de', 'austria' => 'de', 'switzerland' => 'de',
+        'italy' => 'it', 'japan' => 'ja', 'south korea' => 'ko',
+        'russia' => 'ru', 'turkey' => 'tr', 'poland' => 'pl',
+        'netherlands' => 'nl', 'sweden' => 'sv', 'norway' => 'no',
+        'denmark' => 'da', 'finland' => 'fi', 'czech republic' => 'cs',
+        'romania' => 'ro', 'hungary' => 'hu', 'greece' => 'el',
+    ];
+    return $langMap[mb_strtolower(trim($location))] ?? 'en';
+}
+
+/**
  * Phase 1: Broad Discovery — natural language queries, no site: restrictions.
- * Lets the search engine do fuzzy matching for better coverage.
+ * Uses language-appropriate connectors based on location country.
  */
 function buildQuery_phase1(string $engine, string $keyword, string $location): string {
     if (empty($keyword) || empty($location)) return '';
 
     if ($engine === 'google_maps') {
-        return "{$keyword} in {$location}";
+        return "{$keyword} {$location}";
     }
-    // Natural query — no site: or -site: operators (those waste query space and
-    // we already filter unwanted domains post-fetch via should_exclude())
-    return "{$keyword} near {$location}";
+
+    // When using SerpAPI gl/google_domain (country-targeted), the location in the
+    // query is redundant and can dilute results. Use keyword + location simply.
+    $lang = detect_location_language($location);
+    switch ($lang) {
+        case 'pt':
+            return "{$keyword} {$location}";
+        case 'es':
+            return "{$keyword} {$location}";
+        case 'fr':
+            return "{$keyword} {$location}";
+        case 'de':
+            return "{$keyword} {$location}";
+        default:
+            return "{$keyword} {$location}";
+    }
 }
 
 /**
  * Phase 2: Intent-Based Discovery — queries that target contact/about pages directly.
- * Returns an array of query variants to try.
+ * Uses language-appropriate intent phrases based on location country.
  */
 function buildQueries_phase2(string $engine, string $keyword, string $location): array {
     if (empty($keyword) || empty($location)) return [];
 
     if ($engine === 'google_maps') {
-        // Maps only needs one query format
         return ["{$keyword} {$location}"];
     }
 
-    // Multiple intent-based queries — each targets a different angle
-    return [
-        "{$keyword} {$location} contact us email",
-        "{$keyword} {$location} \"about us\"",
-        "best {$keyword} companies in {$location}",
-        "top {$keyword} {$location} reviews",
-        "{$keyword} {$location} services",
-    ];
+    $lang = detect_location_language($location);
+
+    switch ($lang) {
+        case 'pt':
+            return [
+                "{$keyword} {$location} contato email",
+                "{$keyword} {$location} \"sobre nós\"",
+                "melhores empresas de {$keyword} {$location}",
+                "{$keyword} {$location} fornecedores",
+                "{$keyword} {$location} empresas",
+            ];
+        case 'es':
+            return [
+                "{$keyword} {$location} contacto email",
+                "{$keyword} {$location} \"sobre nosotros\"",
+                "mejores empresas de {$keyword} {$location}",
+                "{$keyword} {$location} proveedores",
+                "{$keyword} {$location} empresas",
+            ];
+        case 'fr':
+            return [
+                "{$keyword} {$location} contact email",
+                "{$keyword} {$location} \"à propos\"",
+                "meilleures entreprises {$keyword} {$location}",
+                "{$keyword} {$location} fournisseurs",
+                "{$keyword} {$location} entreprises",
+            ];
+        case 'de':
+            return [
+                "{$keyword} {$location} kontakt email",
+                "{$keyword} {$location} \"über uns\"",
+                "beste {$keyword} unternehmen {$location}",
+                "{$keyword} {$location} lieferanten",
+                "{$keyword} {$location} firmen",
+            ];
+        default:
+            return [
+                "{$keyword} {$location} contact us email",
+                "{$keyword} {$location} \"about us\"",
+                "best {$keyword} companies in {$location}",
+                "top {$keyword} {$location} reviews",
+                "{$keyword} {$location} services",
+            ];
+    }
 }
 
 /**
@@ -320,7 +392,16 @@ function serpapi_search_page(string $engine, string $query, int $num, int $page 
 
     // Pass location to SerpAPI so searches happen in the correct region/country
     if ($location !== null && $location !== '') {
-        $params['location'] = $location;
+        // SerpAPI requires English location names from their database
+        // Map common native-language names to SerpAPI-compatible English names
+        $serpLocationMap = [
+            'brasil' => 'Brazil',
+            'méxico' => 'Mexico',
+            'españa' => 'Spain',
+            'perú' => 'Peru',
+        ];
+        $locLower = mb_strtolower(trim($location));
+        $params['location'] = $serpLocationMap[$locLower] ?? $location;
 
         // Map country names to Google country domains and gl codes
         // When a location matches a country, use that country's Google domain
