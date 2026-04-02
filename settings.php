@@ -106,7 +106,7 @@ $hasPhase2 = $_p2res && $_p2res->num_rows > 0;
                                     <option value="priority" <?= ($settings['crawl_mode'] ?? 'priority') === 'priority' ? 'selected' : '' ?>>Priority Crawl</option>
                                     <option value="discovery" <?= ($settings['crawl_mode'] ?? 'priority') === 'discovery' ? 'selected' : '' ?>>Discovery Crawl</option>
                                 </select>
-                                <div class="form-text"><strong>Priority:</strong> Targets contact/about/team pages first, skips blogs &amp; junk. Fast, focused on emails.<br><strong>Discovery:</strong> Follows all links broadly. Slower but finds more pages. Use for research.</div>
+                                <div class="form-text"><strong>Priority:</strong> Smart pre-crawl of contact/about/team pages, skips junk, early stop when enough emails found.<br><strong>Discovery:</strong> Original behavior, follows all links broadly, useful for research.</div>
                             </div>
                             <div class="col-md-6">
                                 <label for="max_depth" class="form-label">Max Crawl Depth</label>
