@@ -2,6 +2,12 @@
 include 'auth_check.php';
 include 'db.php';
 
+// Auto-add crawl_mode column if missing
+$_cmRes = @$conn->query("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'settings' AND COLUMN_NAME = 'crawl_mode'");
+if (!$_cmRes || $_cmRes->num_rows === 0) {
+    @$conn->query("ALTER TABLE settings ADD COLUMN `crawl_mode` VARCHAR(20) NOT NULL DEFAULT 'priority'");
+}
+
 $res = $conn->query("SELECT * FROM settings WHERE id = 1");
 $settings = $res ? $res->fetch_assoc() : [];
 $min_pages_crawled = isset($settings['min_pages_crawled']) ? (int)$settings['min_pages_crawled'] : 0;
@@ -95,8 +101,16 @@ $hasPhase2 = $_p2res && $_p2res->num_rows > 0;
                                 <div class="form-text">Maximum delay before re-crawling same domain.</div>
                             </div>
                             <div class="col-md-6">
+                                <label for="crawl_mode" class="form-label">Crawl Mode</label>
+                                <select class="form-select" id="crawl_mode" name="crawl_mode">
+                                    <option value="priority" <?= ($settings['crawl_mode'] ?? 'priority') === 'priority' ? 'selected' : '' ?>>Priority Crawl</option>
+                                    <option value="discovery" <?= ($settings['crawl_mode'] ?? 'priority') === 'discovery' ? 'selected' : '' ?>>Discovery Crawl</option>
+                                </select>
+                                <div class="form-text"><strong>Priority:</strong> Targets contact/about/team pages first, skips blogs &amp; junk. Fast, focused on emails.<br><strong>Discovery:</strong> Follows all links broadly. Slower but finds more pages. Use for research.</div>
+                            </div>
+                            <div class="col-md-6">
                                 <label for="max_depth" class="form-label">Max Crawl Depth</label>
-                                <input type="number" class="form-control" id="max_depth" name="max_depth" value="<?= htmlspecialchars($settings['max_depth'] ?? 20) ?>" required>
+                                <input type="number" class="form-control" id="max_depth" name="max_depth" value="<?= htmlspecialchars($settings['max_depth'] ?? 5) ?>" required>
                                 <div class="form-text">Maximum link depth from initial page.</div>
                             </div>
                             <div class="col-md-6">
