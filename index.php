@@ -74,41 +74,6 @@ if ($activeCampaign) {
         <p>Overview of your crawling system and email extraction pipeline.</p>
     </div>
 
-    <!-- Active Campaign Summary -->
-    <div class="card mb-4" style="border-color:#334155; background:#0f172a;">
-        <div class="card-body">
-            <h4 class="mb-3" style="color:#e2e8f0;"><i class="fas fa-bullseye me-2" style="color:#22c55e;"></i>Active Campaign</h4>
-            <?php if ($activeCampaign): ?>
-            <div class="row">
-                <div class="col-md-4">
-                    <h6 style="color:#94a3b8;" class="mb-2">Campaign</h6>
-                    <span class="badge fs-6" style="background:#166534; color:#fff;"><?= htmlspecialchars($activeCampaign['name']) ?></span>
-                </div>
-                <div class="col-md-4">
-                    <h6 style="color:#94a3b8;" class="mb-2">Keywords <span style="color:#64748b;">(<?= count($activeKeywords) ?>)</span></h6>
-                    <?php if (empty($activeKwGroupNames)): ?>
-                        <span class="small" style="color:#94a3b8;"><i class="fas fa-info-circle me-1" style="color:#22c55e;"></i>No keyword groups assigned — all active keywords will be used</span>
-                    <?php else: ?>
-                        <div class="mb-1"><?php foreach ($activeKwGroupNames as $gn): ?><span class="badge me-1 mb-1" style="background:#166534; color:#fff;"><?= htmlspecialchars($gn) ?></span><?php endforeach; ?></div>
-                        <div class="d-flex flex-wrap gap-1"><?php foreach ($activeKeywords as $kw): ?><span class="badge" style="background:#1e293b; border:1px solid #475569; color:#e2e8f0;"><?= htmlspecialchars($kw) ?></span><?php endforeach; ?></div>
-                    <?php endif; ?>
-                </div>
-                <div class="col-md-4">
-                    <h6 style="color:#94a3b8;" class="mb-2">Locations <span style="color:#64748b;">(<?= count($activeLocations) ?>)</span></h6>
-                    <?php if (empty($activeLocGroupNames)): ?>
-                        <span class="small" style="color:#94a3b8;"><i class="fas fa-info-circle me-1" style="color:#22c55e;"></i>No location groups assigned — all active locations will be used</span>
-                    <?php else: ?>
-                        <div class="mb-1"><?php foreach ($activeLocGroupNames as $gn): ?><span class="badge me-1 mb-1" style="background:#166534; color:#fff;"><?= htmlspecialchars($gn) ?></span><?php endforeach; ?></div>
-                        <div class="d-flex flex-wrap gap-1"><?php foreach ($activeLocations as $loc): ?><span class="badge" style="background:#1e293b; border:1px solid #475569; color:#e2e8f0;"><?= htmlspecialchars($loc) ?></span><?php endforeach; ?></div>
-                    <?php endif; ?>
-                </div>
-            </div>
-            <?php else: ?>
-            <div style="color:#94a3b8;"><i class="fas fa-exclamation-triangle me-2" style="color:#22c55e;"></i>No active campaign. <a href="campaigns.php" style="color:#4ade80;">Activate one here.</a></div>
-            <?php endif; ?>
-        </div>
-    </div>
-
     <?php if (isset($_GET['started'])): ?>
     <div class="alert alert-success alert-dismissible fade show" role="alert">
         <i class="fas fa-check-circle me-2"></i>
@@ -606,5 +571,43 @@ function stopAllProcesses() {
         });
 }
 </script>
+
+<!-- Active Campaign Summary -->
+<div class="container-fluid px-4 mb-4">
+    <div class="card" style="border-color:#334155; background:#0f172a;">
+        <div class="card-body">
+            <h4 class="mb-3" style="color:#e2e8f0;"><i class="fas fa-bullseye me-2" style="color:#22c55e;"></i>Active Campaign</h4>
+            <?php if ($activeCampaign): ?>
+            <div class="row">
+                <div class="col-md-4">
+                    <h6 style="color:#94a3b8;" class="mb-2">Campaign</h6>
+                    <span class="badge fs-6" style="background:#166534; color:#fff;"><?= htmlspecialchars($activeCampaign['name']) ?></span>
+                </div>
+                <div class="col-md-4">
+                    <h6 style="color:#94a3b8;" class="mb-2">Keywords <span style="color:#64748b;">(<?= count($activeKeywords) ?>)</span></h6>
+                    <?php if (empty($activeKwGroupNames)): ?>
+                        <span class="small" style="color:#94a3b8;"><i class="fas fa-info-circle me-1" style="color:#22c55e;"></i>No keyword groups assigned — all active keywords will be used</span>
+                    <?php else: ?>
+                        <div class="mb-1"><?php foreach ($activeKwGroupNames as $gn): ?><span class="badge me-1 mb-1" style="background:#166534; color:#fff;"><?= htmlspecialchars($gn) ?></span><?php endforeach; ?></div>
+                        <div class="d-flex flex-wrap gap-1"><?php foreach ($activeKeywords as $kw): ?><span class="badge" style="background:#1e293b; border:1px solid #475569; color:#e2e8f0;"><?= htmlspecialchars($kw) ?></span><?php endforeach; ?></div>
+                    <?php endif; ?>
+                </div>
+                <div class="col-md-4">
+                    <h6 style="color:#94a3b8;" class="mb-2">Locations <span style="color:#64748b;">(<?= count($activeLocations) ?>)</span></h6>
+                    <?php if (empty($activeLocGroupNames)): ?>
+                        <span class="small" style="color:#94a3b8;"><i class="fas fa-info-circle me-1" style="color:#22c55e;"></i>No location groups assigned — all active locations will be used</span>
+                    <?php else: ?>
+                        <div class="mb-1"><?php foreach ($activeLocGroupNames as $gn): ?><span class="badge me-1 mb-1" style="background:#166534; color:#fff;"><?= htmlspecialchars($gn) ?></span><?php endforeach; ?></div>
+                        <div class="d-flex flex-wrap gap-1"><?php foreach ($activeLocations as $loc): ?><span class="badge" style="background:#1e293b; border:1px solid #475569; color:#e2e8f0;"><?= htmlspecialchars($loc) ?></span><?php endforeach; ?></div>
+                    <?php endif; ?>
+                </div>
+            </div>
+            <?php else: ?>
+            <div style="color:#94a3b8;"><i class="fas fa-exclamation-triangle me-2" style="color:#22c55e;"></i>No active campaign. <a href="campaigns.php" style="color:#4ade80;">Activate one here.</a></div>
+            <?php endif; ?>
+        </div>
+    </div>
+</div>
+
 </body>
 </html>
