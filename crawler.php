@@ -508,9 +508,8 @@ function crawl_page(string $url, string $domain, array &$visited, int &$email_co
             }
         }
 
-        $maxLowPriority = max(0, 5 - count($highPriority) - count($medPriority));
-        $lowPriority = array_slice($lowPriority, 0, $maxLowPriority);
-        $sorted_links = array_merge($highPriority, $medPriority, $lowPriority);
+        // Priority mode: only follow high-priority links, nothing else
+        $sorted_links = $highPriority;
     } else {
         // === DISCOVERY MODE: Follow all links, prioritize contact/about first ===
         $contact_links = [];
@@ -794,18 +793,16 @@ if ($row = $res->fetch_assoc()) {
     }
     stream_message("Smart pre-crawl: {$smartHits} priority pages found, {$email_count} emails so far");
 
-    // If smart pre-crawl already found good emails, reduce remaining budget
-    if ($email_count >= 5) {
-        $remaining = max(3, $crawl_state['budget'] - count($visited));
-        $crawl_state['budget'] = count($visited) + min($remaining, 5);
-        stream_message("Good yield from priority pages — limiting remaining crawl to " . (min($remaining, 5)) . " more pages");
+    stream_message("Priority crawl complete: {$smartHits} priority pages, {$email_count} emails found. Done.");
+    // Priority mode: only crawl the homepage itself for footer emails, no link following
+    if (!$crawl_state['stopped'] && !isset($visited[$start_url])) {
+        $crawl_state['budget'] = count($visited) + 1; // just the homepage, no more
+        crawl_page($start_url, $host_domain, $visited, $email_count, $domain_id, $page_delay, 0, 0, $crawl_state);
     }
-    endif; // end priority mode pre-crawl
-
-    // Now crawl the homepage (follows remaining links)
-    if (!$crawl_state['stopped']) {
-        crawl_page($start_url, $host_domain, $visited, $email_count, $domain_id, $page_delay, 0, $max_depth, $crawl_state);
-    }
+    else:
+    // === DISCOVERY MODE: Full crawl with link following ===
+    crawl_page($start_url, $host_domain, $visited, $email_count, $domain_id, $page_delay, 0, $max_depth, $crawl_state);
+    endif;
 
     $urls_crawled_count = count($visited);
     $total_emails_found_in_run += $email_count;
