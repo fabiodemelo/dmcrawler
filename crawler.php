@@ -479,18 +479,39 @@ function crawl_page(string $url, string $domain, array &$visited, int &$email_co
     // Extract and follow links
     preg_match_all('/<a\s+(?:[^>]*?\s+)?href=["\']([^"\']+)["\']/i', $html, $links);
 
-    // Prioritize contact/about pages
-    $sorted_links = [];
-    $contact_links = [];
-    $other_links = [];
+    // === SMART LINK PRIORITIZATION ===
+    // Categorize links by email likelihood: high-value pages first, junk pages never
+    $highPriority = [];   // Almost always have emails
+    $medPriority = [];    // Sometimes have emails
+    $lowPriority = [];    // Rarely have emails — only follow if budget allows
+
     foreach (($links[1] ?? []) as $link) {
-        if (preg_match('/(contact|about|team|staff|people|leadership)/i', $link)) {
-            $contact_links[] = $link;
-        } else {
-            $other_links[] = $link;
+        $linkLower = strtolower($link);
+
+        // SKIP: Pages that almost never have useful emails
+        if (preg_match('/(blog|news|press|article|post|category|tag|archive|feed|cart|checkout|shop|product|catalog|faq|help|login|signin|register|signup|password|reset|privacy|terms|cookie|policy|disclaimer|sitemap|search|wp-content|wp-admin|wp-json|assets|cdn|static|img|image|video|download|embed)/i', $linkLower)) {
+            continue; // Don't follow these at all
+        }
+
+        // HIGH PRIORITY: Pages that typically contain email addresses
+        if (preg_match('/(contact|contato|contacto|kontakt|about|sobre|quem.somos|qui.sommes|uber.uns|team|equipe|equipo|staff|people|leadership|directory|diretoria|management|executive|board|partner|member|employee|our.team|meet.the|bio|profile|connect|reach|get.in.touch|fale.conosco|support|suporte|atendimento|company|empresa|who.we.are|imprint|impressum|footer)/i', $linkLower)) {
+            $highPriority[] = $link;
+        }
+        // MEDIUM PRIORITY: Pages that sometimes have emails
+        elseif (preg_match('/(service|location|office|branch|career|join|work.with|dealer|distributor|agent|representative|regional|investor|relation|vendor|supplier|fornecedor)/i', $linkLower)) {
+            $medPriority[] = $link;
+        }
+        // LOW PRIORITY: Everything else
+        else {
+            $lowPriority[] = $link;
         }
     }
-    $sorted_links = array_merge($contact_links, $other_links);
+
+    // Compose final link list: high-value first, then medium, then limited low
+    // Cap low-priority links to avoid wasting budget on irrelevant pages
+    $maxLowPriority = max(0, 5 - count($highPriority) - count($medPriority)); // At most 5 total non-priority pages
+    $lowPriority = array_slice($lowPriority, 0, $maxLowPriority);
+    $sorted_links = array_merge($highPriority, $medPriority, $lowPriority);
 
     // Page delay
     $sleepFor = rand($page_delay[0], $page_delay[1]);
@@ -532,7 +553,7 @@ $domain_delay = [
 ];
 if ($domain_delay[1] < $domain_delay[0]) $domain_delay[1] = $domain_delay[0];
 
-$max_depth = max(0, (int)(get_setting_value('max_depth') ?? 20));
+$max_depth = max(0, (int)(get_setting_value('max_depth') ?? 5));
 $domain_quality_enabled = (int)(get_setting_value('domain_quality_enabled') ?? 1);
 $page_quality_threshold = (int)(get_setting_value('page_quality_threshold') ?? 30);
 $email_confidence_threshold = (int)(get_setting_value('email_confidence_threshold') ?? 40);
@@ -712,7 +733,63 @@ if ($row = $res->fetch_assoc()) {
 
     $visited = [];
     $email_count = 0;
-    crawl_page($start_url, $host_domain, $visited, $email_count, $domain_id, $page_delay, 0, $max_depth, $crawl_state);
+
+    // === SMART PRE-CRAWL: Try common email-bearing URLs directly ===
+    // These paths statistically yield the most emails. Hit them first before
+    // wasting budget on random link-following from the homepage.
+    $smartPaths = [
+        '/contact', '/contact-us', '/contactus', '/contact.html', '/contact.php',
+        '/about', '/about-us', '/aboutus', '/about.html', '/about.php',
+        '/team', '/our-team', '/meet-the-team', '/leadership', '/staff',
+        '/people', '/directory', '/company', '/who-we-are',
+        '/support', '/get-in-touch', '/reach-us',
+        // Portuguese
+        '/contato', '/fale-conosco', '/sobre', '/sobre-nos', '/quem-somos', '/equipe', '/empresa',
+        // Spanish
+        '/contacto', '/contactenos', '/sobre-nosotros', '/quienes-somos', '/equipo',
+    ];
+
+    $baseUrl = rtrim($start_url, '/');
+    $smartHits = 0;
+    foreach ($smartPaths as $path) {
+        if ($crawl_state['stopped']) break;
+        if (count($visited) >= $crawl_state['budget']) break;
+        $tryUrl = $baseUrl . $path;
+        // Quick HEAD check to see if page exists before full crawl
+        $ch = curl_init($tryUrl);
+        curl_setopt_array($ch, [
+            CURLOPT_NOBODY => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS => 3,
+            CURLOPT_TIMEOUT => 5,
+            CURLOPT_CONNECTTIMEOUT => 4,
+            CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            CURLOPT_RETURNTRANSFER => true,
+        ]);
+        curl_exec($ch);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($httpCode >= 200 && $httpCode < 400) {
+            stream_message("SMART: Found {$path} (HTTP {$httpCode})");
+            crawl_page($tryUrl, $host_domain, $visited, $email_count, $domain_id, $page_delay, 1, $max_depth, $crawl_state);
+            $smartHits++;
+        }
+    }
+    stream_message("Smart pre-crawl: {$smartHits} priority pages found, {$email_count} emails so far");
+
+    // If smart pre-crawl already found good emails, reduce remaining budget
+    // No need to deeply crawl if we already have what we need
+    if ($email_count >= 5) {
+        $remaining = max(3, $crawl_state['budget'] - count($visited));
+        $crawl_state['budget'] = count($visited) + min($remaining, 5);
+        stream_message("Good yield from priority pages — limiting remaining crawl to " . (min($remaining, 5)) . " more pages");
+    }
+
+    // Now crawl the homepage (follows remaining links with smart prioritization)
+    if (!$crawl_state['stopped']) {
+        crawl_page($start_url, $host_domain, $visited, $email_count, $domain_id, $page_delay, 0, $max_depth, $crawl_state);
+    }
 
     $urls_crawled_count = count($visited);
     $total_emails_found_in_run += $email_count;
