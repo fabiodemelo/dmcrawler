@@ -296,7 +296,7 @@ function http_get_json(string $url, int $timeoutSec = 25): array {
  * @throws InvalidArgumentException If the search query is empty.
  * @throws RuntimeException On API communication or response errors.
  */
-function serpapi_search_page(string $engine, string $query, int $num, int $page = 1): array {
+function serpapi_search_page(string $engine, string $query, int $num, int $page = 1, ?string $location = null): array {
     // Ensure query is a string and not empty to prevent errors
     if (empty($query)) {
         throw new InvalidArgumentException("Search query cannot be empty for engine '{$engine}'.");
@@ -318,6 +318,98 @@ function serpapi_search_page(string $engine, string $query, int $num, int $page 
         'safe'   => 'active', // Safe search on
     ];
 
+    // Pass location to SerpAPI so searches happen in the correct region/country
+    if ($location !== null && $location !== '') {
+        $params['location'] = $location;
+
+        // Map country names to Google country domains and gl codes
+        // When a location matches a country, use that country's Google domain
+        $countryMap = [
+            'brasil' => ['google_domain' => 'google.com.br', 'gl' => 'br', 'hl' => 'pt'],
+            'brazil' => ['google_domain' => 'google.com.br', 'gl' => 'br', 'hl' => 'pt'],
+            'mexico' => ['google_domain' => 'google.com.mx', 'gl' => 'mx', 'hl' => 'es'],
+            'méxico' => ['google_domain' => 'google.com.mx', 'gl' => 'mx', 'hl' => 'es'],
+            'argentina' => ['google_domain' => 'google.com.ar', 'gl' => 'ar', 'hl' => 'es'],
+            'chile' => ['google_domain' => 'google.cl', 'gl' => 'cl', 'hl' => 'es'],
+            'colombia' => ['google_domain' => 'google.com.co', 'gl' => 'co', 'hl' => 'es'],
+            'peru' => ['google_domain' => 'google.com.pe', 'gl' => 'pe', 'hl' => 'es'],
+            'perú' => ['google_domain' => 'google.com.pe', 'gl' => 'pe', 'hl' => 'es'],
+            'spain' => ['google_domain' => 'google.es', 'gl' => 'es', 'hl' => 'es'],
+            'españa' => ['google_domain' => 'google.es', 'gl' => 'es', 'hl' => 'es'],
+            'portugal' => ['google_domain' => 'google.pt', 'gl' => 'pt', 'hl' => 'pt'],
+            'france' => ['google_domain' => 'google.fr', 'gl' => 'fr', 'hl' => 'fr'],
+            'germany' => ['google_domain' => 'google.de', 'gl' => 'de', 'hl' => 'de'],
+            'italy' => ['google_domain' => 'google.it', 'gl' => 'it', 'hl' => 'it'],
+            'united kingdom' => ['google_domain' => 'google.co.uk', 'gl' => 'uk', 'hl' => 'en'],
+            'uk' => ['google_domain' => 'google.co.uk', 'gl' => 'uk', 'hl' => 'en'],
+            'canada' => ['google_domain' => 'google.ca', 'gl' => 'ca', 'hl' => 'en'],
+            'australia' => ['google_domain' => 'google.com.au', 'gl' => 'au', 'hl' => 'en'],
+            'japan' => ['google_domain' => 'google.co.jp', 'gl' => 'jp', 'hl' => 'ja'],
+            'india' => ['google_domain' => 'google.co.in', 'gl' => 'in', 'hl' => 'en'],
+            'south africa' => ['google_domain' => 'google.co.za', 'gl' => 'za', 'hl' => 'en'],
+            'netherlands' => ['google_domain' => 'google.nl', 'gl' => 'nl', 'hl' => 'nl'],
+            'belgium' => ['google_domain' => 'google.be', 'gl' => 'be', 'hl' => 'nl'],
+            'switzerland' => ['google_domain' => 'google.ch', 'gl' => 'ch', 'hl' => 'de'],
+            'austria' => ['google_domain' => 'google.at', 'gl' => 'at', 'hl' => 'de'],
+            'sweden' => ['google_domain' => 'google.se', 'gl' => 'se', 'hl' => 'sv'],
+            'norway' => ['google_domain' => 'google.no', 'gl' => 'no', 'hl' => 'no'],
+            'denmark' => ['google_domain' => 'google.dk', 'gl' => 'dk', 'hl' => 'da'],
+            'finland' => ['google_domain' => 'google.fi', 'gl' => 'fi', 'hl' => 'fi'],
+            'poland' => ['google_domain' => 'google.pl', 'gl' => 'pl', 'hl' => 'pl'],
+            'russia' => ['google_domain' => 'google.ru', 'gl' => 'ru', 'hl' => 'ru'],
+            'turkey' => ['google_domain' => 'google.com.tr', 'gl' => 'tr', 'hl' => 'tr'],
+            'south korea' => ['google_domain' => 'google.co.kr', 'gl' => 'kr', 'hl' => 'ko'],
+            'china' => ['google_domain' => 'google.com.hk', 'gl' => 'hk', 'hl' => 'zh-CN'],
+            'taiwan' => ['google_domain' => 'google.com.tw', 'gl' => 'tw', 'hl' => 'zh-TW'],
+            'singapore' => ['google_domain' => 'google.com.sg', 'gl' => 'sg', 'hl' => 'en'],
+            'new zealand' => ['google_domain' => 'google.co.nz', 'gl' => 'nz', 'hl' => 'en'],
+            'ireland' => ['google_domain' => 'google.ie', 'gl' => 'ie', 'hl' => 'en'],
+            'israel' => ['google_domain' => 'google.co.il', 'gl' => 'il', 'hl' => 'he'],
+            'egypt' => ['google_domain' => 'google.com.eg', 'gl' => 'eg', 'hl' => 'ar'],
+            'nigeria' => ['google_domain' => 'google.com.ng', 'gl' => 'ng', 'hl' => 'en'],
+            'kenya' => ['google_domain' => 'google.co.ke', 'gl' => 'ke', 'hl' => 'en'],
+            'indonesia' => ['google_domain' => 'google.co.id', 'gl' => 'id', 'hl' => 'id'],
+            'malaysia' => ['google_domain' => 'google.com.my', 'gl' => 'my', 'hl' => 'ms'],
+            'philippines' => ['google_domain' => 'google.com.ph', 'gl' => 'ph', 'hl' => 'en'],
+            'thailand' => ['google_domain' => 'google.co.th', 'gl' => 'th', 'hl' => 'th'],
+            'vietnam' => ['google_domain' => 'google.com.vn', 'gl' => 'vn', 'hl' => 'vi'],
+            'czech republic' => ['google_domain' => 'google.cz', 'gl' => 'cz', 'hl' => 'cs'],
+            'romania' => ['google_domain' => 'google.ro', 'gl' => 'ro', 'hl' => 'ro'],
+            'hungary' => ['google_domain' => 'google.hu', 'gl' => 'hu', 'hl' => 'hu'],
+            'greece' => ['google_domain' => 'google.gr', 'gl' => 'gr', 'hl' => 'el'],
+            'ukraine' => ['google_domain' => 'google.com.ua', 'gl' => 'ua', 'hl' => 'uk'],
+            'uruguay' => ['google_domain' => 'google.com.uy', 'gl' => 'uy', 'hl' => 'es'],
+            'paraguay' => ['google_domain' => 'google.com.py', 'gl' => 'py', 'hl' => 'es'],
+            'ecuador' => ['google_domain' => 'google.com.ec', 'gl' => 'ec', 'hl' => 'es'],
+            'venezuela' => ['google_domain' => 'google.co.ve', 'gl' => 've', 'hl' => 'es'],
+            'costa rica' => ['google_domain' => 'google.co.cr', 'gl' => 'cr', 'hl' => 'es'],
+            'panama' => ['google_domain' => 'google.com.pa', 'gl' => 'pa', 'hl' => 'es'],
+            'dominican republic' => ['google_domain' => 'google.com.do', 'gl' => 'do', 'hl' => 'es'],
+            'guatemala' => ['google_domain' => 'google.com.gt', 'gl' => 'gt', 'hl' => 'es'],
+            'bolivia' => ['google_domain' => 'google.com.bo', 'gl' => 'bo', 'hl' => 'es'],
+            'honduras' => ['google_domain' => 'google.hn', 'gl' => 'hn', 'hl' => 'es'],
+            'el salvador' => ['google_domain' => 'google.com.sv', 'gl' => 'sv', 'hl' => 'es'],
+            'nicaragua' => ['google_domain' => 'google.com.ni', 'gl' => 'ni', 'hl' => 'es'],
+            'cuba' => ['google_domain' => 'google.com.cu', 'gl' => 'cu', 'hl' => 'es'],
+            'puerto rico' => ['google_domain' => 'google.com.pr', 'gl' => 'pr', 'hl' => 'es'],
+            'morocco' => ['google_domain' => 'google.co.ma', 'gl' => 'ma', 'hl' => 'fr'],
+            'saudi arabia' => ['google_domain' => 'google.com.sa', 'gl' => 'sa', 'hl' => 'ar'],
+            'uae' => ['google_domain' => 'google.ae', 'gl' => 'ae', 'hl' => 'ar'],
+            'united arab emirates' => ['google_domain' => 'google.ae', 'gl' => 'ae', 'hl' => 'ar'],
+            'pakistan' => ['google_domain' => 'google.com.pk', 'gl' => 'pk', 'hl' => 'en'],
+            'bangladesh' => ['google_domain' => 'google.com.bd', 'gl' => 'bd', 'hl' => 'bn'],
+        ];
+
+        // Check if location matches a known country (case-insensitive)
+        $locationLower = mb_strtolower(trim($location));
+        if (isset($countryMap[$locationLower])) {
+            $countryInfo = $countryMap[$locationLower];
+            $params['google_domain'] = $countryInfo['google_domain'];
+            $params['gl'] = $countryInfo['gl'];
+            $params['hl'] = $countryInfo['hl'];
+        }
+    }
+
     // Determine the correct pagination parameter based on the engine
     if ($engine === 'google_maps' || $engine === 'yahoo') {
         $params['p'] = max(1, $page); // Use 'p' for page number for google_maps and yahoo
@@ -330,8 +422,6 @@ function serpapi_search_page(string $engine, string $query, int $num, int $page 
         $params['type'] = 'search'; // Specify search type for Google Maps (e.g., 'search', 'place', 'reviews')
         $params['q'] = $query;      // The query for Google Maps is often simpler
         unset($params['num']); // Google Maps engine typically handles 'num' differently or less directly
-        // Additional Google Maps parameters (like 'll' for latitude/longitude, 'hl' for language, 'gl' for country)
-        // could be added here if more specific location targeting is needed.
     }
 
     $url = 'https://serpapi.com/search.json?' . http_build_query($params);
@@ -782,7 +872,7 @@ function execute_search(string $engine_name, string $query, string $label, int $
 
     while ($collected < $targetResults && $page <= $MAX_PAGES) {
         try {
-            $json = serpapi_search_page($engine_name, $query, $targetResults * $OVERFETCH_FACTOR, $page);
+            $json = serpapi_search_page($engine_name, $query, $targetResults * $OVERFETCH_FACTOR, $page, $location);
             $rawResults = parse_serp_results($json);
         } catch (Throwable $e) {
             report_error("{$label} (page {$page}) failed: " . $e->getMessage());
