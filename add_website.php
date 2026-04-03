@@ -42,7 +42,7 @@ if (isset($_GET['ajax_toggle'])) {
     @ob_end_clean();
     header('Content-Type: application/json');
 
-    if ($id <= 0 || !in_array($field, ['priority', 'donot'])) {
+    if ($id <= 0 || !in_array($field, ['priority', 'donot', 'archived'])) {
         die(json_encode(['ok' => false, 'error' => 'Invalid params']));
     }
 
@@ -95,6 +95,13 @@ function redirect_self(array $params = []): void {
 }
 
 $message = '';
+
+// Auto-create archived column if missing
+$_arRes = @$conn->query("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'domains' AND COLUMN_NAME = 'archived'");
+if (!$_arRes || $_arRes->num_rows === 0) {
+    @$conn->query("ALTER TABLE domains ADD COLUMN `archived` TINYINT(1) NOT NULL DEFAULT 0");
+    @$conn->query("CREATE INDEX idx_archived ON domains (archived)");
+}
 
 // Handle POST actions (Add/Update/Delete Domain)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -212,6 +219,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $message = '<div class="alert alert-danger">Error: Invalid ID provided for deletion.</div>';
         }
+    } elseif ($action === 'archive_uncrawled') {
+        // Bulk archive all uncrawled domains (optionally filtered by campaign)
+        $archCampaign = isset($_POST['campaign_id']) ? (int)$_POST['campaign_id'] : 0;
+        $archWhere = "crawled = 0 AND (archived = 0 OR archived IS NULL)";
+        if ($archCampaign > 0) {
+            $archWhere .= " AND campaign_id = " . $archCampaign;
+        }
+        $archResult = $conn->query("UPDATE domains SET archived = 1 WHERE {$archWhere}");
+        if ($archResult) {
+            $affected = $conn->affected_rows;
+            $message = '<div class="alert alert-success">Archived ' . $affected . ' uncrawled domain' . ($affected !== 1 ? 's' : '') . '.</div>';
+        } else {
+            $message = '<div class="alert alert-danger">Error archiving domains: ' . $conn->error . '</div>';
+            error_log("Error bulk archiving: " . $conn->error);
+        }
     }
     // Ensure `p`, `orderBy`, `orderDir`, `status` are preserved on redirect for form submissions
     $redirect_params = $_GET;
@@ -233,6 +255,7 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
     $filterCrawled = $_GET['crawled_filter'] ?? 'all';
     $filterPriority = $_GET['priority_filter'] ?? 'all';
     $filterDonot = $_GET['donot_filter'] ?? 'all';
+    $filterArchived = $_GET['archived_filter'] ?? 'active'; // default: hide archived
     $filterCampaign = $_GET['filter_campaign'] ?? '';
     $filterKeyword = $_GET['filter_keyword'] ?? '';
     $filterLocation = $_GET['filter_location'] ?? '';
@@ -246,7 +269,7 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
     // Sorting setup
     $orderBy = $_GET['orderBy'] ?? 'date_added';
     $orderDir = $_GET['orderDir'] ?? 'DESC';
-    $validOrderColumns = ['id', 'domain', 'crawled', 'date_added', 'date_crawled', 'emails_found', 'urls_crawled', 'priority', 'donot'];
+    $validOrderColumns = ['id', 'domain', 'crawled', 'date_added', 'date_crawled', 'emails_found', 'urls_crawled', 'priority', 'donot', 'archived'];
     if (!in_array($orderBy, $validOrderColumns)) {
         $orderBy = 'date_added';
     }
@@ -282,6 +305,14 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
         $whereParts[] = 'd.donot = 0';
     }
 
+    // Archived filter (default: show only active)
+    if ($filterArchived === 'active') {
+        $whereParts[] = '(d.archived = 0 OR d.archived IS NULL)';
+    } elseif ($filterArchived === 'archived') {
+        $whereParts[] = 'd.archived = 1';
+    }
+    // 'all' = no filter
+
     if ($filterCampaign !== '') {
         $whereParts[] = "d.campaign_id = " . (int)$filterCampaign;
     }
@@ -303,7 +334,7 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
 
     // Get extra stats: Total domains yet to crawl
     $totalDomainsYetToCrawl = 0;
-    $resStats = $conn->query("SELECT COUNT(*) AS total FROM domains WHERE crawled = 0 AND donot = 0");
+    $resStats = $conn->query("SELECT COUNT(*) AS total FROM domains WHERE crawled = 0 AND donot = 0 AND (archived = 0 OR archived IS NULL)");
     if ($resStats) {
         $totalDomainsYetToCrawl = (int)$resStats->fetch_assoc()['total'];
     }
@@ -322,7 +353,7 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
 
     // Fetch domains for display with filter, sorting, and pagination
     $domains = [];
-    $sql = "SELECT d.id, d.domain, d.crawled, d.date_added, d.date_crawled, d.emails_found, d.urls_crawled, d.priority, d.donot,
+    $sql = "SELECT d.id, d.domain, d.crawled, d.date_added, d.date_crawled, d.emails_found, d.urls_crawled, d.priority, d.donot, d.archived,
                    d.campaign_id, d.source_keyword, d.source_location, c.name AS campaign_name
             FROM domains d
             LEFT JOIN campaigns c ON d.campaign_id = c.id
@@ -380,12 +411,13 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
                 $exportParams = http_build_query(array_filter([
                     'status' => $filterStatus, 'crawled_filter' => $filterCrawled,
                     'priority_filter' => $filterPriority, 'donot_filter' => $filterDonot,
+                    'archived_filter' => $filterArchived,
                     'filter_campaign' => $filterCampaign, 'filter_keyword' => $filterKeyword,
                     'filter_location' => $filterLocation, 'search' => $search,
                 ]));
             ?>
             <a class="btn btn-success" href="export_domains.php?<?= $exportParams ?>" title="Export CSV"><i class="fas fa-download"></i></a>
-            <a class="btn btn-outline-secondary" href="add_website.php" onclick="['status','crawled_filter','priority_filter','donot_filter','filter_campaign','filter_keyword','filter_location'].forEach(function(f){document.cookie='dmf_'+f+'=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;SameSite=Lax';});"><i class="fas fa-times"></i></a>
+            <a class="btn btn-outline-secondary" href="add_website.php" onclick="['status','crawled_filter','priority_filter','donot_filter','archived_filter','filter_campaign','filter_keyword','filter_location'].forEach(function(f){document.cookie='dmf_'+f+'=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;SameSite=Lax';});"><i class="fas fa-times"></i></a>
             <input type="hidden" name="status" value="<?= htmlspecialchars($filterStatus) ?>">
             <input type="hidden" name="crawled_filter" value="<?= htmlspecialchars($filterCrawled) ?>">
             <input type="hidden" name="priority_filter" value="<?= htmlspecialchars($filterPriority) ?>">
@@ -393,13 +425,14 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
             <input type="hidden" name="filter_campaign" value="<?= htmlspecialchars($filterCampaign) ?>">
             <input type="hidden" name="filter_keyword" value="<?= htmlspecialchars($filterKeyword) ?>">
             <input type="hidden" name="filter_location" value="<?= htmlspecialchars($filterLocation) ?>">
+            <input type="hidden" name="archived_filter" value="<?= htmlspecialchars($filterArchived) ?>">
             <input type="hidden" name="orderBy" value="<?= htmlspecialchars($orderBy) ?>">
             <input type="hidden" name="orderDir" value="<?= htmlspecialchars($orderDir) ?>">
             <input type="hidden" name="p" value="<?= htmlspecialchars($current_page) ?>">
         </form>
     </div>
 
-    <!-- Secondary filters: Campaign, Keyword, Location -->
+    <!-- Secondary filters: Campaign, Keyword, Location, Archived -->
     <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
         <select class="form-select form-select-sm table-filter" data-filter="filter_campaign" style="width:auto; min-width:140px;">
             <option value="">All Campaigns</option>
@@ -419,6 +452,21 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
             <option value="<?= htmlspecialchars($loc) ?>" <?= $filterLocation === $loc ? 'selected' : '' ?>><?= htmlspecialchars($loc) ?></option>
             <?php endforeach; ?>
         </select>
+        <select class="form-select form-select-sm table-filter" data-filter="archived_filter" style="width:auto; min-width:140px;">
+            <option value="active" <?= $filterArchived === 'active' ? 'selected' : '' ?>>Active Only</option>
+            <option value="archived" <?= $filterArchived === 'archived' ? 'selected' : '' ?>>Archived Only</option>
+            <option value="all" <?= $filterArchived === 'all' ? 'selected' : '' ?>>All (incl. Archived)</option>
+        </select>
+
+        <div class="ms-auto">
+            <form method="post" action="add_website.php" class="d-inline" onsubmit="return confirm('Archive all uncrawled domains? They will be hidden from crawler and default view.');">
+                <input type="hidden" name="action" value="archive_uncrawled">
+                <?php if ($filterCampaign): ?>
+                <input type="hidden" name="campaign_id" value="<?= (int)$filterCampaign ?>">
+                <?php endif; ?>
+                <button type="submit" class="btn btn-sm btn-outline-warning"><i class="fas fa-archive me-1"></i>Archive Uncrawled<?= $filterCampaign ? ' (filtered campaign)' : '' ?></button>
+            </form>
+        </div>
     </div>
 
     <?= $message ?>
@@ -451,6 +499,7 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
                 <col style="width:50px;">
                 <col style="width:90px;">
                 <col style="width:90px;">
+                <col style="width:80px;">
                 <col style="width:150px;">
                 <col style="width:130px;">
             </colgroup>
@@ -489,13 +538,20 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
                             <option value="skip" <?= $filterDonot === 'skip' ? 'selected' : '' ?>>Skip</option>
                         </select>
                     </th>
+                    <th>
+                        <select class="form-select form-select-sm table-filter" data-filter="archived_filter">
+                            <option value="active" <?= $filterArchived === 'active' ? 'selected' : '' ?>>Active</option>
+                            <option value="archived" <?= $filterArchived === 'archived' ? 'selected' : '' ?>>Archived</option>
+                            <option value="all" <?= $filterArchived === 'all' ? 'selected' : '' ?>>All</option>
+                        </select>
+                    </th>
                     <th>Source</th>
                     <th class="actions-col text-center">Actions</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if (empty($domains)): ?>
-                <tr><td colspan="11">
+                <tr><td colspan="12">
                     <div class="empty-state">
                         <i class="fas fa-globe"></i>
                         <h4>No domains found</h4>
@@ -538,6 +594,15 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
                               data-value="<?= $row['donot'] ?>"
                               style="cursor:pointer;user-select:none;">
                             <?= $row['donot'] ? 'Skip' : 'Crawl' ?>
+                        </span>
+                    </td>
+                    <td>
+                        <span class="badge toggle-badge js-toggle <?= !empty($row['archived']) ? 'bg-secondary' : 'bg-light text-muted' ?>"
+                              data-id="<?= $row['id'] ?>"
+                              data-field="archived"
+                              data-value="<?= (int)($row['archived'] ?? 0) ?>"
+                              style="cursor:pointer;user-select:none;">
+                            <?= !empty($row['archived']) ? 'Archived' : 'Active' ?>
                         </span>
                     </td>
                     <td>
@@ -640,6 +705,7 @@ if (isset($_GET['msg_type']) && isset($_GET['msg_text'])) {
         $pq = http_build_query([
             'status' => $filterStatus, 'crawled_filter' => $filterCrawled,
             'priority_filter' => $filterPriority, 'donot_filter' => $filterDonot,
+            'archived_filter' => $filterArchived,
             'filter_campaign' => $filterCampaign, 'filter_keyword' => $filterKeyword,
             'filter_location' => $filterLocation,
             'search' => $search, 'orderBy' => $orderBy, 'orderDir' => $orderDir,
@@ -705,7 +771,7 @@ document.querySelectorAll('.table-filter').forEach(function(sel) {
 // --- On page load: restore filters from cookies if no explicit URL param ---
 (function() {
     var params = new URLSearchParams(window.location.search);
-    var filters = ['status', 'crawled_filter', 'priority_filter', 'donot_filter', 'filter_campaign', 'filter_keyword', 'filter_location'];
+    var filters = ['status', 'crawled_filter', 'priority_filter', 'donot_filter', 'archived_filter', 'filter_campaign', 'filter_keyword', 'filter_location'];
     var needsRedirect = false;
     var form = document.getElementById('filterForm');
 
@@ -752,6 +818,9 @@ document.addEventListener('click', function(e) {
             } else if (field === 'donot') {
                 el.textContent = v ? 'Skip' : 'Crawl';
                 el.className = 'badge toggle-badge js-toggle ' + (v ? 'bg-danger' : 'bg-light text-muted');
+            } else if (field === 'archived') {
+                el.textContent = v ? 'Archived' : 'Active';
+                el.className = 'badge toggle-badge js-toggle ' + (v ? 'bg-secondary' : 'bg-light text-muted');
             }
 
             el.style.transform = 'scale(1.2)';

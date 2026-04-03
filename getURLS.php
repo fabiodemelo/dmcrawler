@@ -636,15 +636,22 @@ function load_existing_domains(): array {
 /**
  * Phase 3: Get seed domains — top-performing crawled domains that found emails.
  * These are used to find similar/competitor businesses via "related:" queries.
+ * Filters by active campaign to avoid cross-campaign pollution.
  */
-function get_seed_domains(int $limit = 15): array {
+function get_seed_domains(int $limit = 15, ?int $campaignId = null): array {
     $domains = [];
+    $campaignFilter = '';
+    if ($campaignId) {
+        $campaignFilter = " AND campaign_id = {$campaignId}";
+    }
+    $archivedFilter = " AND (archived = 0 OR archived IS NULL)";
     try {
         $stmt = db()->query("
             SELECT domain FROM domains
             WHERE crawled = 1
               AND emails_found > 0
               AND (blacklisted = 0 OR blacklisted IS NULL)
+              {$archivedFilter}{$campaignFilter}
             ORDER BY emails_found DESC, quality_score DESC
             LIMIT {$limit}
         ");
@@ -652,11 +659,11 @@ function get_seed_domains(int $limit = 15): array {
             $domains[] = $row['domain'];
         }
     } catch (Throwable $e) {
-        // quality_score column might not exist if Phase 2 migration hasn't run
+        // quality_score or archived column might not exist
         try {
             $stmt = db()->query("
                 SELECT domain FROM domains
-                WHERE crawled = 1 AND emails_found > 0
+                WHERE crawled = 1 AND emails_found > 0{$campaignFilter}
                 ORDER BY emails_found DESC
                 LIMIT {$limit}
             ");
@@ -1120,39 +1127,48 @@ foreach ($ENGINES as $engine_data) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// PHASE 3: Competitor Mining
-// "related:domain.com" queries based on top-performing domains
+// PHASE 3: Competitor Mining (DISABLED by default)
+// Google's "related:" operator barely works anymore and returns
+// 0 results most of the time — wastes SerpAPI credits.
+// Enable via settings if needed in the future.
 // ═══════════════════════════════════════════════════════════════
-log_line("═══ PHASE 3: Competitor Mining ═══");
+$enablePhase3 = (int)(get_setting_value('enable_phase3_mining') ?? 0);
+if ($enablePhase3) {
+    log_line("═══ PHASE 3: Competitor Mining ═══");
 
-$seedDomains = get_seed_domains(15);
-if (empty($seedDomains)) {
-    log_line("  No seed domains available for competitor mining (need crawled domains with emails).");
-} else {
-    log_line("  Using " . count($seedDomains) . " seed domains: " . implode(', ', array_slice($seedDomains, 0, 5)) . '...');
+    $campaignIdForSeeds = $ACTIVE_CAMPAIGN ? (int)$ACTIVE_CAMPAIGN['id'] : null;
+    $seedDomains = get_seed_domains(15, $campaignIdForSeeds);
+    if (empty($seedDomains)) {
+        log_line("  No seed domains available for competitor mining (need crawled domains with emails in active campaign).");
+    } else {
+        log_line("  Using " . count($seedDomains) . " seed domains: " . implode(', ', array_slice($seedDomains, 0, 5)) . '...');
 
-    // Only run Phase 3 on google (related: is a Google operator)
-    foreach (['google'] as $engine_name) {
-        $queries = buildQueries_phase3($engine_name, $seedDomains);
+        // Only run Phase 3 on google (related: is a Google operator)
+        foreach (['google'] as $engine_name) {
+            $queries = buildQueries_phase3($engine_name, $seedDomains);
 
-        foreach ($queries as $qi => $query) {
-            $seedDomain = $seedDomains[$qi] ?? 'unknown';
-            $label = "P3: related to {$seedDomain}";
-            log_line("P3: [{$engine_name}] {$query}");
-            @file_put_contents(__DIR__ . '/search_activity.json', json_encode([
-                'phase' => 3,
-                'engine' => $engine_name,
-                'keyword' => "related:{$seedDomain}",
-                'location' => 'competitor mining',
-                'query' => $query,
-                'started_at' => date('Y-m-d H:i:s'),
-                'inserted_so_far' => $totalInserted,
-            ]));
+            foreach ($queries as $qi => $query) {
+                $seedDomain = $seedDomains[$qi] ?? 'unknown';
+                $label = "P3: related to {$seedDomain}";
+                log_line("P3: [{$engine_name}] {$query}");
+                @file_put_contents(__DIR__ . '/search_activity.json', json_encode([
+                    'phase' => 3,
+                    'engine' => $engine_name,
+                    'keyword' => "related:{$seedDomain}",
+                    'location' => 'competitor mining',
+                    'query' => $query,
+                    'started_at' => date('Y-m-d H:i:s'),
+                    'inserted_so_far' => $totalInserted,
+                ]));
 
-            execute_search($engine_name, $query, $label, 10, $existingDomains, $seenThisRun, null, null);
-            usleep(500000);
+                execute_search($engine_name, $query, $label, 10, $existingDomains, $seenThisRun, null, null);
+                usleep(500000);
+            }
         }
     }
+} else {
+    log_line("═══ PHASE 3: Competitor Mining — SKIPPED (disabled) ═══");
+    log_line("  Google's related: operator returns 0 results. Enable in Settings > SERP tab if needed.");
 }
 
 log_line("═══ All 3 phases complete ═══");

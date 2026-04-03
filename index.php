@@ -170,13 +170,6 @@ if ($activeCampaign) {
                     <p class="text-muted mb-3">Trigger background processes for data acquisition.</p>
                     <div class="row g-3">
                         <div class="col-6">
-                            <a href="run_crawler.php" class="action-btn btn-primary w-100">
-                                <i class="fas fa-spider"></i>
-                                Run Crawler
-                            </a>
-                            <div class="text-muted mt-1" style="font-size:0.7rem; line-height:1.3;">Visits pending domains, scans their pages, and extracts email addresses into the database.</div>
-                        </div>
-                        <div class="col-6">
                             <a href="run_get_urls.php" class="action-btn btn-info w-100">
                                 <i class="fas fa-link"></i>
                                 Get URLs
@@ -188,7 +181,14 @@ if ($activeCampaign) {
                                 <i class="fas fa-envelope-open-text"></i>
                                 Get Emails
                             </a>
-                            <div class="text-muted mt-1" style="font-size:0.7rem; line-height:1.3;">Same as Run Crawler above. Picks the next pending domain and crawls it for emails.</div>
+                            <div class="text-muted mt-1" style="font-size:0.7rem; line-height:1.3;">Crawls pending domains and extracts email addresses from their pages.</div>
+                        </div>
+                        <div class="col-6">
+                            <a href="run_crawler.php" class="action-btn btn-primary w-100">
+                                <i class="fas fa-spider"></i>
+                                Run Pending URLs
+                            </a>
+                            <div class="text-muted mt-1" style="font-size:0.7rem; line-height:1.3;">Picks the next pending domain and crawls it for emails. Same as Get Emails but runs one domain at a time.</div>
                         </div>
                         <div class="col-6">
                             <a href="run_send_mautic.php" class="action-btn btn-success w-100">

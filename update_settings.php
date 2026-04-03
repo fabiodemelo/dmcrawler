@@ -40,12 +40,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'enable_email_geturls_error' => isset($_POST['enable_email_geturls_error']) ? 1 : 0,
         'enable_email_crawler_success' => isset($_POST['enable_email_crawler_success']) ? 1 : 0,
         'enable_email_crawler_error' => isset($_POST['enable_email_crawler_error']) ? 1 : 0,
+        'enable_phase3_mining' => isset($_POST['enable_phase3_mining']) ? 1 : 0,
     ];
 
     // Auto-add enable_daily_report column if missing
     $_drRes = @$conn->query("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'settings' AND COLUMN_NAME = 'enable_daily_report'");
     if (!$_drRes || $_drRes->num_rows === 0) {
         @$conn->query("ALTER TABLE settings ADD COLUMN `enable_daily_report` TINYINT(1) NOT NULL DEFAULT 1");
+    }
+
+    // Auto-add enable_phase3_mining column if missing (default OFF)
+    $_p3Res = @$conn->query("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'settings' AND COLUMN_NAME = 'enable_phase3_mining'");
+    if (!$_p3Res || $_p3Res->num_rows === 0) {
+        @$conn->query("ALTER TABLE settings ADD COLUMN `enable_phase3_mining` TINYINT(1) NOT NULL DEFAULT 0");
     }
 
     // Phase 2 Intelligence fields (only if columns exist)

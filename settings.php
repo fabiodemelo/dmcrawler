@@ -8,6 +8,12 @@ if (!$_cmRes || $_cmRes->num_rows === 0) {
     @$conn->query("ALTER TABLE settings ADD COLUMN `crawl_mode` VARCHAR(20) NOT NULL DEFAULT 'priority'");
 }
 
+// Auto-add enable_phase3_mining column if missing (default OFF)
+$_p3Res = @$conn->query("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'settings' AND COLUMN_NAME = 'enable_phase3_mining'");
+if (!$_p3Res || $_p3Res->num_rows === 0) {
+    @$conn->query("ALTER TABLE settings ADD COLUMN `enable_phase3_mining` TINYINT(1) NOT NULL DEFAULT 0");
+}
+
 $res = $conn->query("SELECT * FROM settings WHERE id = 1");
 $settings = $res ? $res->fetch_assoc() : [];
 $min_pages_crawled = isset($settings['min_pages_crawled']) ? (int)$settings['min_pages_crawled'] : 0;
@@ -154,6 +160,13 @@ $hasPhase2 = $_p2res && $_p2res->num_rows > 0;
                                 <label for="serp_cooldown_hours" class="form-label">Search Cooldown (hours)</label>
                                 <input type="number" class="form-control" id="serp_cooldown_hours" name="serp_cooldown_hours" value="<?= htmlspecialchars($settings['serp_cooldown_hours'] ?? 24) ?>" min="0" required>
                                 <div class="form-text">Wait time before re-searching a keyword/engine/location combo.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-check form-switch mt-4">
+                                    <input class="form-check-input" type="checkbox" id="enable_phase3_mining" name="enable_phase3_mining" value="1" <?= (int)($settings['enable_phase3_mining'] ?? 0) ? 'checked' : '' ?>>
+                                    <label class="form-check-label" for="enable_phase3_mining">Enable Phase 3: Competitor Mining</label>
+                                </div>
+                                <div class="form-text">Uses Google's <code>related:</code> operator on your top domains. Disabled by default — this operator rarely returns results and wastes SerpAPI credits.</div>
                             </div>
                         </div>
                     </div>

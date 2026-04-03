@@ -599,6 +599,7 @@ foreach ($argv ?? [] as $arg) {
 // Select domain to crawl
 $has_blacklisted = (bool)$conn->query("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'domains' AND COLUMN_NAME = 'blacklisted'");
 $has_campaign_id = (bool)$conn->query("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'domains' AND COLUMN_NAME = 'campaign_id'");
+$has_archived = (bool)$conn->query("SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'domains' AND COLUMN_NAME = 'archived'");
 
 // Get active campaign — crawler only processes domains from the active campaign
 $activeCampaignId = null;
@@ -617,6 +618,9 @@ if ($forced_domain_id > 0) {
 } else {
     // Select next domain in queue — only from active campaign
     $domain_query = "SELECT * FROM domains WHERE crawled = 0 AND donot = 0";
+    if ($has_archived) {
+        $domain_query .= " AND (archived = 0 OR archived IS NULL)";
+    }
     if ($has_campaign_id && $activeCampaignId !== null) {
         $domain_query .= " AND campaign_id = {$activeCampaignId}";
     }
