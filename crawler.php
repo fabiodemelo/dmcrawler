@@ -752,61 +752,61 @@ if ($row = $res->fetch_assoc()) {
     $email_count = 0;
 
     // === SMART PRE-CRAWL (Priority mode only) ===
-    if ($crawl_mode === 'priority'):
-    // Try common email-bearing URLs directly
-    // These paths statistically yield the most emails. Hit them first before
-    // wasting budget on random link-following from the homepage.
-    $smartPaths = [
-        '/contact', '/contact-us', '/contactus', '/contact.html', '/contact.php',
-        '/about', '/about-us', '/aboutus', '/about.html', '/about.php',
-        '/team', '/our-team', '/meet-the-team', '/leadership', '/staff',
-        '/people', '/directory', '/company', '/who-we-are',
-        '/support', '/get-in-touch', '/reach-us',
-        // Portuguese
-        '/contato', '/fale-conosco', '/sobre', '/sobre-nos', '/quem-somos', '/equipe', '/empresa',
-        // Spanish
-        '/contacto', '/contactenos', '/sobre-nosotros', '/quienes-somos', '/equipo',
-    ];
+    if ($crawl_mode === 'priority') {
+        // Try common email-bearing URLs directly
+        // These paths statistically yield the most emails. Hit them first before
+        // wasting budget on random link-following from the homepage.
+        $smartPaths = [
+            '/contact', '/contact-us', '/contactus', '/contact.html', '/contact.php',
+            '/about', '/about-us', '/aboutus', '/about.html', '/about.php',
+            '/team', '/our-team', '/meet-the-team', '/leadership', '/staff',
+            '/people', '/directory', '/company', '/who-we-are',
+            '/support', '/get-in-touch', '/reach-us',
+            // Portuguese
+            '/contato', '/fale-conosco', '/sobre', '/sobre-nos', '/quem-somos', '/equipe', '/empresa',
+            // Spanish
+            '/contacto', '/contactenos', '/sobre-nosotros', '/quienes-somos', '/equipo',
+        ];
 
-    $baseUrl = rtrim($start_url, '/');
-    $smartHits = 0;
-    foreach ($smartPaths as $path) {
-        if ($crawl_state['stopped']) break;
-        if (count($visited) >= $crawl_state['budget']) break;
-        $tryUrl = $baseUrl . $path;
-        // Quick HEAD check to see if page exists before full crawl
-        $ch = curl_init($tryUrl);
-        curl_setopt_array($ch, [
-            CURLOPT_NOBODY => true,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS => 3,
-            CURLOPT_TIMEOUT => 5,
-            CURLOPT_CONNECTTIMEOUT => 4,
-            CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            CURLOPT_RETURNTRANSFER => true,
-        ]);
-        curl_exec($ch);
-        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+        $baseUrl = rtrim($start_url, '/');
+        $smartHits = 0;
+        foreach ($smartPaths as $path) {
+            if ($crawl_state['stopped']) break;
+            if (count($visited) >= $crawl_state['budget']) break;
+            $tryUrl = $baseUrl . $path;
+            // Quick HEAD check to see if page exists before full crawl
+            $ch = curl_init($tryUrl);
+            curl_setopt_array($ch, [
+                CURLOPT_NOBODY => true,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_MAXREDIRS => 3,
+                CURLOPT_TIMEOUT => 5,
+                CURLOPT_CONNECTTIMEOUT => 4,
+                CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                CURLOPT_RETURNTRANSFER => true,
+            ]);
+            curl_exec($ch);
+            $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
 
-        if ($httpCode >= 200 && $httpCode < 400) {
-            stream_message("SMART: Found {$path} (HTTP {$httpCode})");
-            crawl_page($tryUrl, $host_domain, $visited, $email_count, $domain_id, $page_delay, 1, $max_depth, $crawl_state);
-            $smartHits++;
+            if ($httpCode >= 200 && $httpCode < 400) {
+                stream_message("SMART: Found {$path} (HTTP {$httpCode})");
+                crawl_page($tryUrl, $host_domain, $visited, $email_count, $domain_id, $page_delay, 1, $max_depth, $crawl_state);
+                $smartHits++;
+            }
         }
-    }
-    stream_message("Smart pre-crawl: {$smartHits} priority pages found, {$email_count} emails so far");
+        stream_message("Smart pre-crawl: {$smartHits} priority pages found, {$email_count} emails so far");
 
-    stream_message("Priority crawl complete: {$smartHits} priority pages, {$email_count} emails found. Done.");
-    // Priority mode: only crawl the homepage itself for footer emails, no link following
-    if (!$crawl_state['stopped'] && !isset($visited[$start_url])) {
-        $crawl_state['budget'] = count($visited) + 1; // just the homepage, no more
-        crawl_page($start_url, $host_domain, $visited, $email_count, $domain_id, $page_delay, 0, 0, $crawl_state);
+        // Priority mode: only crawl the homepage itself for footer emails, no link following
+        if (!$crawl_state['stopped'] && !isset($visited[$start_url])) {
+            $crawl_state['budget'] = count($visited) + 1; // just the homepage, no more
+            crawl_page($start_url, $host_domain, $visited, $email_count, $domain_id, $page_delay, 0, 0, $crawl_state);
+        }
+        stream_message("Priority crawl complete: {$smartHits} priority pages, {$email_count} emails found. Done.");
+    } else {
+        // === DISCOVERY MODE: Full crawl with link following ===
+        crawl_page($start_url, $host_domain, $visited, $email_count, $domain_id, $page_delay, 0, $max_depth, $crawl_state);
     }
-    else:
-    // === DISCOVERY MODE: Full crawl with link following ===
-    crawl_page($start_url, $host_domain, $visited, $email_count, $domain_id, $page_delay, 0, $max_depth, $crawl_state);
-    endif;
 
     $urls_crawled_count = count($visited);
     $total_emails_found_in_run += $email_count;
